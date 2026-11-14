@@ -101,6 +101,10 @@ func RegisterHandlers(engine *rest.Server) {
 	frontFileServer := http.StripPrefix("/manager", http.FileServer(http.FS(frontFS)))
 
 	assetsHandler := http.FileServer(http.FS(frontFS))
+	// 清单与 Service Worker 按根路径引用；显式提供公开静态资源，确保安装及预缓存可用。
+	for _, path := range []string{"/manifest.json", "/sw.js", "/logo.png", "/index.html"} {
+		engine.AddRoute(rest.Route{Method: http.MethodGet, Path: path, Handler: assetsHandler.ServeHTTP})
+	}
 
 	// Serve custom icons
 	iconFileServer := http.StripPrefix("/src/config/image/", http.FileServer(http.Dir("/data/config/image")))

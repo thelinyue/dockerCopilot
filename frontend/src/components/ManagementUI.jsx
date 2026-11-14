@@ -11,6 +11,19 @@ export function PageHeader({ title, children }) {
   )
 }
 
+export function UpdateBadge() {
+  return <div role="img" aria-label="有可用更新" className="absolute -top-[2px] -right-[2px] w-[80px] h-[80px] pointer-events-none overflow-hidden z-20 rounded-tr-2xl">
+    <div className="absolute top-0 right-0 w-full h-full flex items-center justify-center">
+      <div className="absolute transform rotate-45 translate-x-[26px] -translate-y-[26px] w-[120px] h-[24px] bg-gradient-to-r from-yellow-400 to-yellow-500 dark:from-yellow-500 dark:to-yellow-600 shadow-sm flex items-center justify-center">
+        <span className="relative text-[10px] font-bold text-white tracking-widest uppercase w-full text-center">
+          NEW
+          <span className="absolute top-0 left-0 animate-flow-light" />
+        </span>
+      </div>
+    </div>
+  </div>
+}
+
 export function Notice({ children, type = 'error', onClose }) {
   if (!children) return null
   const Icon = type === 'success' ? CheckCircle : AlertCircle
@@ -67,8 +80,8 @@ export function Dialog({ title, onClose, children, className }) {
     }
   }, [])
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4" onClick={event => { if (event.target === event.currentTarget) onClose?.() }}>
-      <section ref={panel} role="dialog" aria-modal="true" aria-labelledby={titleId} className={cn('bg-white dark:bg-gray-800 rounded-2xl shadow-xl max-w-lg w-full max-h-[calc(100dvh-2rem)] overflow-y-auto text-gray-900 dark:text-gray-100', className)}>
+    <div className="modal-viewport bg-black bg-opacity-50 z-[60]" onClick={event => { if (event.target === event.currentTarget) onClose?.() }}>
+      <section ref={panel} role="dialog" aria-modal="true" aria-labelledby={titleId} className={cn('modal-panel bg-white dark:bg-gray-800 rounded-2xl shadow-xl max-w-lg w-full text-gray-900 dark:text-gray-100', className)}>
         <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center gap-3">
           <h3 id={titleId} className="min-w-0 break-words text-lg font-medium text-gray-900 dark:text-white">{title}</h3>
           <button type="button" onClick={onClose} disabled={!onClose} aria-label="关闭对话框" className="flex-shrink-0 text-gray-400 hover:text-gray-500 dark:hover:text-gray-300 disabled:opacity-50"><X className="h-5 w-5" /></button>

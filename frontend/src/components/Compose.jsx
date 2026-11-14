@@ -4,7 +4,7 @@ import { Boxes, RefreshCw, Save, FolderOpen, Plus, Play, Square, RotateCcw, Down
 import { useDeviceAPI } from '../hooks/useDevice.jsx'
 import { cn } from '../utils/cn.js'
 import { useTaskProgress } from './Tasks.jsx'
-import { Dialog, Notice, useConfirmation } from './ManagementUI.jsx'
+import { Dialog, Notice, UpdateBadge, useConfirmation } from './ManagementUI.jsx'
 
 const actionLabels = { start: '启动', stop: '停止', restart: '重启', pull: '拉取镜像', deploy: '部署', update: '拉取并更新' }
 const actionProgressLabels = { start: '启动中', stop: '停止中', restart: '重启中', pull: '拉取中', deploy: '部署中', update: '更新中' }
@@ -68,11 +68,18 @@ function ComposeActionMenu({ items, disabled, onAction }) {
 }
 
 export function Compose({ onDirty, initialTarget, onOpenContainers }) {
-  const { deviceId, managementAPI } = useDeviceAPI()
+  const { deviceId, containerAPI, managementAPI } = useDeviceAPI()
   const queryClient = useQueryClient()
   const confirm = useConfirmation()
   const { data, error, isLoading, isFetching, refetch } = useQuery({ queryKey: [deviceId, 'composeProjects'], queryFn: managementAPI.projects })
   const { data: info } = useQuery({ queryKey: [deviceId, 'nodeInfo'], queryFn: managementAPI.info })
+  const { data: containers = [], isFetching: fetchingContainers, refetch: refreshContainers } = useQuery({
+    queryKey: [deviceId, 'containers'],
+    queryFn: async () => (await containerAPI.getContainers()).data.data || [],
+    refetchInterval: 10000,
+  })
+  const updatableContainerIds = new Set(containers.filter(container => container.haveUpdate).map(container => container.id))
+  const hasProjectUpdate = item => item.services.some(service => service.containers.some(id => updatableContainerIds.has(id)))
   const projects = data?.projects || []
   const [projectId, setProjectId] = useState('')
   const [filterStatus, setFilterStatus] = useState('all')
@@ -115,9 +122,18 @@ export function Compose({ onDirty, initialTarget, onOpenContainers }) {
     { id: 'all', label: '总项目', count: projects.length, color: 'text-primary-600 dark:text-primary-400', active: 'bg-primary-50 dark:bg-primary-900/20' },
     { id: 'running', label: '运行中', count: projects.filter(item => getProjectState(item).status === 'running').length, color: 'text-green-600 dark:text-green-400', active: 'bg-green-50 dark:bg-green-900/20' },
     { id: 'stopped', label: '未运行', count: projects.filter(item => getProjectState(item).status === 'stopped').length, color: 'text-red-600 dark:text-red-400', active: 'bg-red-50 dark:bg-red-900/20' },
+    { id: 'update', label: '有更新', count: projects.filter(hasProjectUpdate).length, color: 'text-yellow-600 dark:text-yellow-400', active: 'bg-yellow-50 dark:bg-yellow-900/20' },
     { id: 'error', label: '配置异常', count: projects.filter(item => getProjectState(item).status === 'error').length, color: 'text-yellow-600 dark:text-yellow-400', active: 'bg-yellow-50 dark:bg-yellow-900/20' },
   ]
-  const visibleProjects = projects.filter(item => filterStatus === 'all' || getProjectState(item).status === filterStatus)
+  // 稳定排序只提升有运行服务的项目，同组保留原有顺序，也包含部分运行的项目。
+  const visibleProjects = projects.filter(item => filterStatus === 'update' ? hasProjectUpdate(item) : filterStatus === 'all' || getProjectState(item).status === filterStatus)
+    .sort((first, second) => Number(second.services.some(service => service.running > 0)) - Number(first.services.some(service => service.running > 0)))
+  useEffect(() => {
+    if (!task || !progress?.isDone || progress.status !== 'succeeded') return
+    // 成功提示短暂展示后恢复实际状态；失败结果保留，旧计时器不能清除后续任务。
+    const timer = setTimeout(() => queryClient.setQueryData([deviceId, 'composeAction'], current => current?.taskID === task.taskID ? null : current), 3000)
+    return () => clearTimeout(timer)
+  }, [deviceId, task?.taskID, progress?.isDone, progress?.status, queryClient])
   useEffect(() => {
     if (!initialTarget || !data || isFetching || openedTarget.current === initialTarget) return
     // 等待项目刷新后再定位；旧节点没有工作目录时，不能用同名项目替代容器的实际归属。
@@ -253,7 +269,7 @@ export function Compose({ onDirty, initialTarget, onOpenContainers }) {
         <h2 className="text-2xl font-bold text-gray-900 dark:text-white">项目管理</h2>
         <div className="flex flex-wrap items-center gap-3">
           <button type="button" className="btn-secondary gap-2" onClick={() => { setImportError(''); setImportOpen(true) }}><Plus className="h-4 w-4" />接管项目</button>
-          <button type="button" className="btn-primary gap-2 disabled:opacity-50" disabled={busy || isFetching} onClick={() => refetch()}><RefreshCw className={cn('h-4 w-4', isFetching && 'animate-spin')} />刷新</button>
+          <button type="button" className="btn-primary gap-2 disabled:opacity-50" disabled={busy || isFetching || fetchingContainers} onClick={() => { refetch(); refreshContainers() }}><RefreshCw className={cn('h-4 w-4', (isFetching || fetchingContainers) && 'animate-spin')} />刷新</button>
         </div>
       </div>
       <div className="space-y-4">
@@ -267,14 +283,14 @@ export function Compose({ onDirty, initialTarget, onOpenContainers }) {
       </div>
 
       <div className="px-2 sm:px-6 py-4">
-        <div className="grid grid-cols-4 rounded-3xl overflow-hidden shadow-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+        <div className="grid grid-cols-5 rounded-3xl overflow-hidden shadow-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
           {filters.map((filter, filterIndex) => <button key={filter.id} type="button" aria-pressed={filterStatus === filter.id} onClick={() => setFilterStatus(filter.id)} className={cn(
-            'p-3 sm:p-5 text-center transition-all duration-300 group flex flex-col items-center justify-center',
+            'px-0.5 py-3 sm:p-5 text-center transition-all duration-300 group flex flex-col items-center justify-center min-w-0',
             filterIndex < filters.length - 1 && 'border-r border-gray-200 dark:border-gray-700',
             filterStatus === filter.id ? filter.active : 'hover:bg-gray-50 dark:hover:bg-gray-700/50'
           )}>
             <span className={cn('text-2xl sm:text-3xl font-bold transition-transform duration-300 group-hover:scale-110', filter.color)}>{isLoading || (!data && error) ? '—' : filter.count}</span>
-            <span className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mt-1 whitespace-nowrap">{filter.label}</span>
+            <span className="text-[10px] sm:text-sm text-gray-600 dark:text-gray-400 mt-1 whitespace-nowrap">{filter.label}</span>
           </button>)}
         </div>
       </div>
@@ -295,7 +311,9 @@ export function Compose({ onDirty, initialTarget, onOpenContainers }) {
             const statusLabel = running ? `${running < total ? '部分运行' : '运行中'} ${running}/${total}` : '未运行'
             const currentTask = task?.projectId === item.id
             const updating = currentTask && taskRunning
+            const haveUpdate = hasProjectUpdate(item)
             return <article key={item.id} aria-label={`项目 ${item.name}`} className="card group relative overflow-hidden hover:shadow-lg hover:border-primary-300 dark:hover:border-primary-600 rounded-2xl p-4 min-w-0">
+              {haveUpdate && <UpdateBadge />}
               <button type="button" aria-label={`编辑项目 ${item.name}`} disabled={busy} onClick={() => selectProject(item.id)} className="flex items-center gap-3 w-full min-w-0 text-left rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 disabled:opacity-50">
                 <span className="h-12 w-12 bg-gradient-to-r from-blue-500 to-purple-600 rounded-xl flex items-center justify-center shadow-sm flex-shrink-0"><Boxes className="h-6 w-6 text-white" /></span>
                 <span className={cn('w-1 h-8 rounded-full flex-shrink-0', status === 'error' || (running && running < total) ? 'bg-yellow-500' : running ? 'bg-green-500' : 'bg-red-500')} />
@@ -308,7 +326,7 @@ export function Compose({ onDirty, initialTarget, onOpenContainers }) {
                   </span>
                 </span>
               </button>
-              <div className="flex gap-1 mt-3 pt-3 border-t border-gray-100 dark:border-gray-700/50">
+              <div className="card-actions flex gap-1 mt-3 pt-3 border-t border-gray-100 dark:border-gray-700/50">
                 {updating ? progressError ? <button type="button" className={cn(cardActionClass, 'text-primary-600 dark:text-primary-400')} disabled={fetchingProgress} onClick={() => refreshProgress()}><RefreshCw className={cn('h-4 w-4', fetchingProgress && 'animate-spin')} />刷新进度</button> : <div className="flex-1 flex items-center justify-center gap-2 px-1 py-1.5 bg-primary-50 dark:bg-primary-900/20 rounded-lg border border-primary-200 dark:border-primary-800 whitespace-nowrap text-xs font-medium text-primary-600 dark:text-primary-400">
                   <RefreshCw className="h-4 w-4 animate-spin flex-shrink-0" /><span>{taskLabel}</span>
                 </div> : cardActions.map(([name, Icon]) => <button key={name} type="button" title={`${name === 'update' ? '更新' : actionLabels[name]} ${item.name}`} disabled={mutating || !!item.error || !info?.capabilities.compose} className={cn(cardActionClass, cardActionColors[name])} onClick={() => requestAction(name, item, [])}><Icon className="h-4 w-4" /><span>{name === 'update' ? '更新' : actionLabels[name]}</span></button>)}

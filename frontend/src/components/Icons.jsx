@@ -361,8 +361,8 @@ export function Icons() {
       </div>
       {/* 图标详情弹窗 */}
       {selectedIcon && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+        <div className="modal-viewport bg-black bg-opacity-50 z-50">
+          <div className="modal-panel bg-white dark:bg-gray-800 rounded-2xl shadow-xl max-w-2xl w-full">
             <div className="p-6">
               <div className="flex justify-between items-start mb-4">
                 <h3 className="text-xl font-semibold text-gray-900 dark:text-white">
@@ -403,7 +403,7 @@ export function Icons() {
                       type="text"
                       value={selectedIcon.url}
                       readOnly
-                      className="flex-1 p-3 bg-gray-50 dark:bg-gray-700 rounded-lg text-gray-900 dark:text-white font-mono text-sm border border-gray-200 dark:border-gray-600"
+                      className="flex-1 min-w-0 p-3 bg-gray-50 dark:bg-gray-700 rounded-lg text-gray-900 dark:text-white font-mono text-sm border border-gray-200 dark:border-gray-600"
                     />
                     <button
                       onClick={() => copyToClipboard(selectedIcon.url, selectedIcon.name)}

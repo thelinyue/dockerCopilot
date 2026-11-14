@@ -53,6 +53,28 @@ function AppContent() {
   const isSidebarCollapsed = getSmartCollapsedState(windowWidth, userPreferredCollapsed)
 
   useEffect(() => {
+    const viewport = window.visualViewport
+    if (!viewport) return
+    const root = document.documentElement
+    const update = () => {
+      root.style.setProperty('--visual-viewport-height', `${viewport.height}px`)
+      root.style.setProperty('--visual-viewport-top', `${viewport.offsetTop}px`)
+      // 地址栏伸缩不视为键盘；用户主动缩放时也不隐藏导航。
+      root.classList.toggle('keyboard-open', viewport.scale === 1 && window.innerHeight - viewport.height > 150)
+    }
+    update()
+    viewport.addEventListener('resize', update)
+    viewport.addEventListener('scroll', update)
+    return () => {
+      viewport.removeEventListener('resize', update)
+      viewport.removeEventListener('scroll', update)
+      root.style.removeProperty('--visual-viewport-height')
+      root.style.removeProperty('--visual-viewport-top')
+      root.classList.remove('keyboard-open')
+    }
+  }, [])
+
+  useEffect(() => {
     // 检查本地存储中是否有token
     const token = localStorage.getItem('docker_copilot_token')
     if (token) {
@@ -180,7 +202,7 @@ function AppContent() {
 
   return (
     <DeviceProvider key={deviceId} deviceId={deviceId}>
-    <div className="flex min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors duration-300 flex-col lg:flex-row">
+    <div className="app-shell flex bg-gray-50 dark:bg-gray-900 transition-colors duration-300 flex-col lg:flex-row">
       <Sidebar
         activeTab={activeTab}
         onTabChange={handleTabChange}
@@ -194,9 +216,9 @@ function AppContent() {
       <main className={cn(
         "flex-1 min-w-0 flex flex-col transition-all duration-300",
         "overflow-y-auto",
-        "min-h-screen",
+        "min-h-0",
         windowWidth < 768
-          ? 'pb-[calc(88px+1rem+env(safe-area-inset-bottom))]'
+          ? 'mobile-main'
           : windowWidth < 1024
             ? 'ml-20'
             : isSidebarCollapsed

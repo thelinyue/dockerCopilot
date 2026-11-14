@@ -171,7 +171,7 @@ export function Images() {
           <div>
             <h2 className="text-2xl font-bold text-gray-900 dark:text-white">镜像管理</h2>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={() => {
                 const imagesToDelete = pruneCandidates('dangling')
@@ -235,8 +235,8 @@ export function Images() {
 
       {/* 成功弹窗 */}
       {successModal.isOpen && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fadeIn">
-          <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-2xl max-w-md w-full overflow-hidden transform transition-all duration-300 scale-100 hover:scale-105">
+        <div className="modal-viewport bg-black/40 backdrop-blur-sm z-50 animate-fadeIn">
+          <div className="modal-panel bg-white dark:bg-gray-800 rounded-3xl shadow-2xl max-w-md w-full transform transition-all duration-300 scale-100">
             {/* 顶部装饰条 */}
             <div className="h-1 bg-gradient-to-r from-green-400 via-emerald-500 to-green-600"></div>
 
@@ -477,8 +477,8 @@ export function Images() {
 
       {/* 批量删除确认弹窗 */}
       {pruneModal.isOpen && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fadeIn">
-          <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-2xl max-w-2xl w-full max-h-96 flex flex-col overflow-hidden transform transition-all duration-300 scale-100">
+        <div className="modal-viewport bg-black/40 backdrop-blur-sm z-50 animate-fadeIn">
+          <div className="modal-panel bg-white dark:bg-gray-800 rounded-3xl shadow-2xl max-w-2xl w-full flex flex-col transform transition-all duration-300 scale-100">
             {/* 顶部装饰条 */}
             <div className="h-1 bg-gradient-to-r from-orange-400 via-red-500 to-orange-600"></div>
 
@@ -560,8 +560,8 @@ export function Images() {
 
       {/* 删除确认弹窗 */}
       {deleteModal.isOpen && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fadeIn">
-          <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-2xl max-w-md w-full overflow-hidden transform transition-all duration-300 scale-100">
+        <div className="modal-viewport bg-black/40 backdrop-blur-sm z-50 animate-fadeIn">
+          <div className="modal-panel bg-white dark:bg-gray-800 rounded-3xl shadow-2xl max-w-md w-full transform transition-all duration-300 scale-100">
             {/* 顶部装饰条 */}
             {/*<div className="h-1 bg-gradient-to-r from-red-400 via-rose-500 to-red-600"></div>*/}
 

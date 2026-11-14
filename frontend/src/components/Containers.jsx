@@ -18,6 +18,7 @@ import { cn } from '../utils/cn.js'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getImageLogo } from '../config/imageLogos.js'
 import icons8Img from '../assets/icons8.png'
+import { Dialog, UpdateBadge, useConfirmation } from './ManagementUI.jsx'
 
 // 格式化运行时间为中文
 function formatRunningTime(runningTime) {
@@ -68,8 +69,9 @@ function formatRunningTime(runningTime) {
 }
 
 export function Containers({ scope, onClearScope, onOpenCompose }) {
-  const { deviceId, containerAPI, progressAPI, imageAPI } = useDeviceAPI()
+  const { deviceId, containerAPI, progressAPI, imageAPI, managementAPI } = useDeviceAPI()
   const queryClient = useQueryClient()
+  const confirm = useConfirmation()
   const [selectedContainer, setSelectedContainer] = useState(null)
   // 添加批量操作相关的状态
   const [selectedContainers, setSelectedContainers] = useState([])
@@ -395,8 +397,6 @@ export function Containers({ scope, onClearScope, onOpenCompose }) {
         return
       }
 
-      if (container.composeProject && !existingTaskID) { onOpenCompose?.(container); return }
-
       console.log(`开始更新容器 "${container.name}"，使用镜像: ${container.usingImage}`)
 
       setContainerActions(prev => ({
@@ -411,6 +411,30 @@ export function Containers({ scope, onClearScope, onOpenCompose }) {
           [containerId]: existingTaskID
         }))
         await pollProgress(containerId, existingTaskID)
+        return
+      }
+
+      if (container.composeProject) {
+        const { projects } = await managementAPI.projects()
+        // 用实际容器 ID 定位服务，避免同名项目或过期标签把更新扩大到其他服务。
+        const project = projects.find(item => item.services.some(service => service.containers.includes(containerId)))
+        const service = project?.services.find(item => item.containers.includes(containerId))
+        if (!project || !service?.name) throw new Error('未能定位所属项目服务，请刷新列表并检查项目目录。')
+        if (project.error) throw new Error(project.error)
+        if (!await confirm({
+          title: '更新项目服务',
+          message: `拉取并更新 ${project.name} 的 ${service.name} 服务？该服务的全部副本将一并更新，并应用已保存的配置；卷内数据无法回退。`,
+          confirmText: '更新',
+        })) {
+          setContainerActions(prev => { const next = { ...prev }; delete next[containerId]; return next })
+          return
+        }
+        const { taskID } = await managementAPI.composeAction(project.id, 'update', [service.name])
+        setSelectedContainer(null)
+        queryClient.setQueryData([deviceId, 'composeAction'], { taskID, projectId: project.id, action: 'update' })
+        setUpdateTasks(prev => ({ ...prev, [containerId]: taskID }))
+        await queryClient.invalidateQueries({ queryKey: [deviceId, 'tasks'] })
+        await pollProgress(containerId, taskID)
         return
       }
 
@@ -451,6 +475,7 @@ export function Containers({ scope, onClearScope, onOpenCompose }) {
       }
     } catch (error) {
       console.error('更新容器失败:', error)
+      setSelectedContainer(null)
       setContainerActions(prev => {
         const newState = { ...prev }
         delete newState[containerId]
@@ -586,8 +611,8 @@ export function Containers({ scope, onClearScope, onOpenCompose }) {
 
       {/* 自定义确认弹窗 */}
       {confirmModal.isOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full">
+        <div className="modal-viewport bg-black bg-opacity-50 z-[70]">
+          <div role="alertdialog" aria-modal="true" aria-label={confirmModal.title} className="modal-panel bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full">
             <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
               <h3 className="text-lg font-medium text-gray-900 dark:text-white">
                 {confirmModal.title}
@@ -865,7 +890,10 @@ export function Containers({ scope, onClearScope, onOpenCompose }) {
               .map((container) => {
                 const isSelected = selectedContainers.includes(container.id)
                 return (
-                  <div key={container.id} className="group">
+                  <div key={container.id} className="group relative">
+                    {container.composeProject && <span title={`所属项目：${container.composeProject}${container.composeService ? ` / ${container.composeService}` : ''}`} className="absolute -top-2 left-3 z-30 max-w-[calc(100%-6rem)] inline-flex items-center gap-1 rounded-md border border-primary-200 dark:border-primary-800 bg-primary-50 dark:bg-gray-800 px-1.5 py-0.5 text-[10px] font-medium text-primary-600 dark:text-primary-400 shadow-sm">
+                      <Boxes className="h-3 w-3 flex-shrink-0" /><span className="truncate">{container.composeProject}</span>
+                    </span>}
                     {/* 容器卡片 - 简化设计，点击调起详情 */}
                     <div
                       onClick={(e) => {
@@ -903,19 +931,7 @@ export function Containers({ scope, onClearScope, onOpenCompose }) {
                       )}
 
                       {/* NEW (有更新时显示) */}
-                      {container.haveUpdate && (
-                        <div className="absolute -top-[2px] -right-[2px] w-[80px] h-[80px] pointer-events-none overflow-hidden z-20 rounded-tr-2xl">
-                          <div className="absolute top-0 right-0 w-full h-full flex items-center justify-center">
-                            <div className="absolute transform rotate-45 translate-x-[26px] -translate-y-[26px] w-[120px] h-[24px] bg-gradient-to-r from-yellow-400 to-yellow-500 dark:from-yellow-500 dark:to-yellow-600 shadow-sm flex items-center justify-center">
-                              <span className="relative text-[10px] font-bold text-white tracking-widest uppercase w-full text-center">
-                                NEW
-                                {/* 流光效果 */}
-                                <div className="absolute top-0 left-0 animate-flow-light"></div>
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      )}
+                      {container.haveUpdate && <UpdateBadge />}
 
                       <div className="relative z-10 flex items-center gap-3">
                         {/* 图标 */}
@@ -1015,13 +1031,9 @@ export function Containers({ scope, onClearScope, onOpenCompose }) {
                         </div>
                       </div>
 
-                      {container.composeProject && <button type="button" onClick={event => { event.stopPropagation(); onOpenCompose?.(container) }} title={`打开项目 ${container.composeProject}`} aria-label={`打开 ${container.name} 所属项目`} className="inline-flex items-center gap-1.5 max-w-full mt-2 px-2 py-1 rounded-lg text-xs text-primary-700 dark:text-primary-300 bg-primary-50 dark:bg-primary-900/20 hover:bg-primary-100 dark:hover:bg-primary-900/40 transition-colors">
-                        <Boxes className="h-3.5 w-3.5 flex-shrink-0" /><span className="truncate">{container.composeProject}{container.composeService && ` / ${container.composeService}`}</span>
-                      </button>}
-
                       {/* 操作按钮栏 - 底部水平排列 */}
                       {!isBatchMode && (
-                        <div className="flex gap-1 mt-3 pt-3 border-t border-gray-100 dark:border-gray-700/50">
+                        <div className="card-actions flex gap-1 mt-3 pt-3 border-t border-gray-100 dark:border-gray-700/50">
                           {containerActions[container.id]?.loading ? (
                             <div className="flex-1 flex items-center justify-center space-x-2 px-1 py-1.5 bg-primary-50 dark:bg-primary-900/20 rounded-lg border border-primary-200 dark:border-primary-800 whitespace-nowrap">
                               <RefreshCw className="h-4 w-4 animate-spin text-primary-600 dark:text-primary-400" />
@@ -1075,10 +1087,11 @@ export function Containers({ scope, onClearScope, onOpenCompose }) {
                                 title="更新"
                               >
                                 <Upload className="h-4 w-4" />
-                                <span>{container.composeProject ? '项目' : '更新'}</span>
+                                <span>更新</span>
                               </button>
                             </>
                           )}
+                          {container.composeProject && <button type="button" onClick={event => { event.stopPropagation(); onOpenCompose?.(container) }} aria-label={`打开 ${container.name} 所属项目`} title="打开所属项目" className="flex-1 flex items-center justify-center gap-1 px-1 py-1.5 text-primary-600 dark:text-primary-400 bg-white dark:bg-gray-800 hover:bg-primary-50 dark:hover:bg-primary-900/20 border border-gray-200 dark:border-gray-700 hover:border-primary-200 dark:hover:border-primary-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"><Boxes className="h-4 w-4" /><span>项目</span></button>}
                         </div>
                       )}
                     </div>
@@ -1474,13 +1487,11 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
+    <Dialog title="容器详情" className="max-w-md" onClose={onClose}>
         {/* 弹窗头部 */}
         <div className="border-b border-gray-200 dark:border-gray-700 px-6 py-4">
           <div className="flex justify-between items-center">
             <div>
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">容器详情</h3>
               <div className="flex items-center mt-1">
                 {getContainerIcon()}
                 {/* 状态指示器竖线 */}
@@ -1502,12 +1513,6 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
                 </div>
               </div>
             </div>
-            <button
-              onClick={onClose}
-              className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-            >
-              <X className="h-5 w-5" />
-            </button>
           </div>
         </div>
 
@@ -1608,7 +1613,7 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
                 ) : (
                   <>
                     <Upload className="h-4 w-4 flex-shrink-0" />
-                    <span>{container.composeProject ? '项目' : '更新'}</span>
+                    <span>更新</span>
                   </>
                 )}
               </button>
@@ -1686,7 +1691,6 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
 
           </div>
         </div>
-      </div>
-    </div>
+    </Dialog>
   )
 }

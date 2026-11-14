@@ -18,16 +18,8 @@ export function UpdatePrompt({
   if (!isVisible) return null
 
   return (
-    <>
-      {/* 半透明背景 */}
-      <div
-        className="fixed inset-0 bg-black/50 z-40"
-        onClick={onClose}
-      />
-
-      {/* 弹窗 */}
-      <div className="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-md mx-4">
-        <div className="bg-white dark:bg-slate-900 rounded-lg shadow-2xl border border-gray-200 dark:border-slate-700 overflow-hidden">
+    <div className="modal-viewport bg-black/50 z-[60]" onClick={event => { if (event.target === event.currentTarget) onClose() }}>
+        <div role="dialog" aria-modal="true" aria-label="有新版本可用" className="modal-panel w-full max-w-md bg-white dark:bg-slate-900 rounded-lg shadow-2xl border border-gray-200 dark:border-slate-700">
           {/* 顶部 - 关闭按钮 */}
           <div className="flex items-center justify-between px-6 py-4 bg-gradient-to-r from-blue-50 to-blue-100 dark:from-blue-900/20 dark:to-blue-800/20 border-b border-gray-200 dark:border-slate-700">
             <div className="flex items-center gap-2">
@@ -107,7 +99,6 @@ export function UpdatePrompt({
 
           </div>
         </div>
-      </div>
-    </>
+    </div>
   )
 }

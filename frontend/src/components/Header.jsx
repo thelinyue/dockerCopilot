@@ -92,7 +92,7 @@ export function Sidebar({ activeTab, onTabChange, onLogout, isCollapsed = false,
     <>
       {/* 顶部导航栏 - 仅在手机模式（sm）显示 */}
       {windowWidth < 768 && (
-        <div className="fixed top-0 left-0 right-0 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between px-3 sm:px-4 z-40 shadow-sm" style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: '0.875rem', height: 'calc(3.5rem + env(safe-area-inset-top))' }}>
+        <div className="mobile-header fixed top-0 left-0 right-0 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between z-40 shadow-sm">
           {/* 左侧：Logo 和项目信息 */}
           <button
             onClick={() => setIsMobileMenuOpen(true)}
@@ -125,7 +125,7 @@ export function Sidebar({ activeTab, onTabChange, onLogout, isCollapsed = false,
       )}
 
       {/* 添加顶部导航栏的占位符 - 仅在手机模式显示 */}
-      {windowWidth < 768 && <div style={{ height: 'calc(3.5rem + env(safe-area-inset-top))' }} />}
+      {windowWidth < 768 && <div className="flex-shrink-0" style={{ height: 'var(--mobile-header-height)' }} />}
 
       {/* 侧边栏遮罩 - 仅在手机菜单打开时显示 */}
       {windowWidth < 768 && isMobileMenuOpen && (
@@ -144,11 +144,11 @@ export function Sidebar({ activeTab, onTabChange, onLogout, isCollapsed = false,
           windowWidth < 768
             ? (isMobileMenuOpen ? "translate-x-0" : "-translate-x-full")
             : "translate-x-0",
-          "max-h-screen overflow-y-auto",
-          // 手机模式距顶部导航栏下方，其他模式从顶部开始
-          windowWidth < 768 ? "top-14" : "top-0",
+          "overflow-y-auto",
+          windowWidth >= 768 && "top-0",
           "border-r border-gray-200 dark:border-gray-700"
         )}
+        style={windowWidth < 768 ? { top: 'var(--mobile-header-height)', paddingBottom: 'var(--safe-area-bottom)' } : undefined}
       >
         <div className="flex flex-col h-full">
           {/* 头部 - 现代卡片设计 (仅在非手机模式显示) */}
@@ -363,10 +363,13 @@ export function MobileBottomNav({ activeTab, onTabChange, windowWidth = 1024 }) 
   return (
     <>
       {windowWidth < 768 && (
-        <nav 
-          className="fixed left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] max-w-sm bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-full z-40 shadow-lg transition-all duration-300"
+        <nav
+          aria-label="手机导航"
+          className="mobile-bottom-nav fixed mx-auto max-w-sm bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-full z-40 shadow-lg transition-all duration-300"
           style={{ 
-            bottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.5rem)'
+            left: 'max(1rem, var(--safe-area-left))',
+            right: 'max(1rem, var(--safe-area-right))',
+            bottom: 'calc(var(--safe-area-bottom) + 0.5rem)'
           }}
         >
           <div className="flex items-center justify-around px-3 py-3 gap-1">
@@ -376,6 +379,7 @@ export function MobileBottomNav({ activeTab, onTabChange, windowWidth = 1024 }) 
               return (
                 <button
                   key={item.id}
+                  aria-current={isActive ? 'page' : undefined}
                   onClick={() => onTabChange(item.id)}
                   className={cn(
                     "flex flex-col items-center justify-center gap-1 py-2 px-1.5 rounded-full transition-all duration-200 active:scale-95 flex-1 min-w-0",
