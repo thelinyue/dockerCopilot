@@ -48,22 +48,29 @@ export function TaskHistoryDialog({ onClose }) {
   </Dialog>
 }
 
-// 关闭进度窗口只收起界面；继续查询提交设备的结果，并在完成后同步两页状态。
-export function TaskProgressDialog({ task, open, onClose }) {
+// 卡片和弹窗共用轮询；任务始终属于提交时的设备，完成后同步两页状态。
+export function useTaskProgress(task) {
   const { deviceId, progressAPI } = useDeviceAPI()
   const queryClient = useQueryClient()
   const completed = useRef(null)
-  const { data, error, isFetching, refetch } = useQuery({
-    queryKey: [deviceId, 'taskProgress', task.taskID],
+  const query = useQuery({
+    queryKey: [deviceId, 'taskProgress', task?.taskID],
     queryFn: async () => (await progressAPI.getProgress(task.taskID)).data.data,
+    enabled: !!task?.taskID,
     refetchInterval: query => query.state.data?.isDone ? false : 2000,
     retry: false,
   })
   useEffect(() => {
-    if (!data?.isDone || completed.current === task.taskID) return
+    if (!query.data?.isDone || completed.current === task?.taskID) return
     completed.current = task.taskID
     for (const key of ['tasks', 'composeProjects', 'containers', 'images']) queryClient.invalidateQueries({ queryKey: [deviceId, key] })
-  }, [data?.isDone, task.taskID, deviceId, queryClient])
+  }, [query.data?.isDone, task?.taskID, deviceId, queryClient])
+  return query
+}
+
+// 关闭窗口只收起界面，检测与自动更新继续查询结果。
+export function TaskProgressDialog({ task, open, onClose }) {
+  const { data, error, isFetching, refetch } = useTaskProgress(task)
   if (!open) return null
   return <Dialog title={task.title} onClose={onClose}>
     <div className="p-4 sm:p-6 space-y-4">

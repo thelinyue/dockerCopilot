@@ -121,7 +121,7 @@ export function Automation() {
           <section className="card rounded-2xl overflow-hidden">
             <div className="px-4 sm:px-6 py-4 border-b border-gray-200 dark:border-gray-700"><h3 className="font-semibold flex items-center gap-2"><Network className="h-5 w-5 text-primary-600 dark:text-primary-400" />检测代理</h3></div>
             <div className="p-4 sm:p-6 space-y-3">
-              <div className="grid md:grid-cols-2 gap-4">{[['httpProxy', 'HTTP_PROXY'], ['httpsProxy', 'HTTPS_PROXY']].map(([key, label]) => <label key={key} className="text-sm font-medium">{label}<input disabled={busy} autoComplete="off" type="password" aria-label={label} className="input mt-2 text-sm" placeholder="直连" value={form[key]} onChange={e => change(key, e.target.value)} /></label>)}</div>
+              <div className="grid md:grid-cols-2 gap-4">{[['httpProxy', 'HTTP_PROXY'], ['httpsProxy', 'HTTPS_PROXY']].map(([key, label]) => <label key={key} className="text-sm font-medium">{label}<input disabled={busy} autoComplete="off" type="text" aria-label={label} className="input mt-2 text-sm" placeholder="直连" value={form[key]} onChange={e => change(key, e.target.value)} /></label>)}</div>
               <p className="text-xs text-gray-500 dark:text-gray-400">仅用于更新检测；镜像拉取代理在宿主机设置。</p>
             </div>
           </section>

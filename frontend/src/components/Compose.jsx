@@ -1,12 +1,22 @@
 import React, { useEffect, useId, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Boxes, RefreshCw, Save, FolderOpen, Plus, Play, Square, RotateCcw, Download, Upload, Check, Server, Clock, ChevronDown, AlertCircle } from 'lucide-react'
+import { Boxes, RefreshCw, Save, FolderOpen, Plus, Play, Square, RotateCcw, Download, Upload, Check, Server, ChevronDown, AlertCircle } from 'lucide-react'
 import { useDeviceAPI } from '../hooks/useDevice.jsx'
 import { cn } from '../utils/cn.js'
-import { TaskProgressDialog } from './Tasks.jsx'
+import { useTaskProgress } from './Tasks.jsx'
 import { Dialog, Notice, useConfirmation } from './ManagementUI.jsx'
 
 const actionLabels = { start: '启动', stop: '停止', restart: '重启', pull: '拉取镜像', deploy: '部署', update: '拉取并更新' }
+const actionProgressLabels = { start: '启动中', stop: '停止中', restart: '重启中', pull: '拉取中', deploy: '部署中', update: '更新中' }
+const actionResultLabels = { succeeded: '已完成', failed: '操作失败', rolled_back: '操作失败，已恢复', rollback_failed: '恢复失败' }
+const actionStatusColors = {
+  running: 'text-blue-600 dark:text-blue-400',
+  succeeded: 'text-green-600 dark:text-green-400',
+  failed: 'text-red-600 dark:text-red-400',
+  rolled_back: 'text-amber-600 dark:text-amber-400',
+  rollback_failed: 'text-red-600 dark:text-red-400',
+  unavailable: 'text-amber-600 dark:text-amber-400',
+}
 const moreActions = [['restart', RotateCcw], ['pull', Download], ['deploy', Upload]]
 const cardActionClass = 'flex-1 flex items-center justify-center gap-1 px-1 py-1.5 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed'
 const cardActionColors = {
@@ -80,8 +90,14 @@ export function Compose({ onDirty, initialTarget, onOpenContainers }) {
   const [importName, setImportName] = useState('')
   const [importFiles, setImportFiles] = useState('')
   const [importError, setImportError] = useState('')
-  const [task, setTask] = useState(null)
-  const [progressOpen, setProgressOpen] = useState(false)
+  // 保留当前设备的操作位置，切到容器页再返回时仍能在原项目卡片查看进度。
+  const { data: task } = useQuery({ queryKey: [deviceId, 'composeAction'], enabled: false, initialData: null, gcTime: Infinity })
+  const { data: progress, error: progressError, isFetching: fetchingProgress, refetch: refreshProgress } = useTaskProgress(task)
+  const taskRunning = !!task && !progress?.isDone
+  const mutating = busy || taskRunning
+  const taskStatus = progressError ? 'unavailable' : progress?.status || 'running'
+  const taskMessage = progressError ? '进度暂不可用，请刷新进度' : progress?.message || '正在准备操作…'
+  const taskLabel = taskRunning ? `${actionProgressLabels[task.action]}${progress?.percentage > 0 ? ` ${Math.round(progress.percentage)}%` : ''}` : actionResultLabels[progress?.status] || '操作结束'
   const requestNumber = useRef(0)
   const openedTarget = useRef(null)
   const editor = useRef(null)
@@ -90,7 +106,8 @@ export function Compose({ onDirty, initialTarget, onOpenContainers }) {
   const targetServices = project?.services.filter(service => !services.length || services.includes(service.name)) || []
   const running = targetServices.some(service => service.running > 0)
   const hasStopped = targetServices.some(service => service.running < service.total)
-  const actionDisabled = busy || !!project?.error || !info?.capabilities.compose
+  const actionDisabled = mutating || !!project?.error || !info?.capabilities.compose
+  const projectTask = task?.projectId === projectId
   const currentValidation = loaded && validation?.projectId === projectId && validation.index === index && validation.content === content ? validation : null
   const checking = loaded && (!currentValidation || currentValidation.status === 'checking')
   const invalid = currentValidation?.status === 'done' && !currentValidation.valid
@@ -188,8 +205,8 @@ export function Compose({ onDirty, initialTarget, onOpenContainers }) {
   }
   const action = async (name, target = project, selectedServices = services) => {
     const result = await managementAPI.composeAction(target.id, name, selectedServices)
-    setTask({ taskID: result.taskID, title: `${target.name} · ${actionLabels[name]}` })
-    setProgressOpen(true)
+    const next = { taskID: result.taskID, projectId: target.id, action: name }
+    queryClient.setQueryData([deviceId, 'composeAction'], next)
   }
   const viewContainers = (target, serviceName = '') => onOpenContainers({
     projectName: target.name, directory: target.directory, serviceName,
@@ -235,7 +252,6 @@ export function Compose({ onDirty, initialTarget, onOpenContainers }) {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 space-y-4 sm:space-y-0 pt-4 sm:pt-0">
         <h2 className="text-2xl font-bold text-gray-900 dark:text-white">项目管理</h2>
         <div className="flex flex-wrap items-center gap-3">
-          {task && <button type="button" className="btn-secondary gap-2" onClick={() => setProgressOpen(true)}><Clock className="h-4 w-4" />最近操作</button>}
           <button type="button" className="btn-secondary gap-2" onClick={() => { setImportError(''); setImportOpen(true) }}><Plus className="h-4 w-4" />接管项目</button>
           <button type="button" className="btn-primary gap-2 disabled:opacity-50" disabled={busy || isFetching} onClick={() => refetch()}><RefreshCw className={cn('h-4 w-4', isFetching && 'animate-spin')} />刷新</button>
         </div>
@@ -277,6 +293,8 @@ export function Compose({ onDirty, initialTarget, onOpenContainers }) {
             const { running, total, status } = getProjectState(item)
             const cardActions = running ? [['stop', Square], ['restart', RotateCcw], ['update', Upload]] : [['start', Play], ['update', Upload]]
             const statusLabel = running ? `${running < total ? '部分运行' : '运行中'} ${running}/${total}` : '未运行'
+            const currentTask = task?.projectId === item.id
+            const updating = currentTask && taskRunning
             return <article key={item.id} aria-label={`项目 ${item.name}`} className="card group relative overflow-hidden hover:shadow-lg hover:border-primary-300 dark:hover:border-primary-600 rounded-2xl p-4 min-w-0">
               <button type="button" aria-label={`编辑项目 ${item.name}`} disabled={busy} onClick={() => selectProject(item.id)} className="flex items-center gap-3 w-full min-w-0 text-left rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 disabled:opacity-50">
                 <span className="h-12 w-12 bg-gradient-to-r from-blue-500 to-purple-600 rounded-xl flex items-center justify-center shadow-sm flex-shrink-0"><Boxes className="h-6 w-6 text-white" /></span>
@@ -284,15 +302,19 @@ export function Compose({ onDirty, initialTarget, onOpenContainers }) {
                 <span className="flex-1 min-w-0">
                   <span className="block font-semibold text-base text-gray-900 dark:text-white truncate group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors" title={item.name}>{item.name}</span>
                   <span className="block text-xs text-gray-500 dark:text-gray-400 truncate mt-0.5" title={item.directory}>{item.directory}</span>
-                  <span className={cn('block text-xs truncate mt-1 h-5', item.error ? 'text-amber-600 dark:text-amber-400' : 'text-gray-500 dark:text-gray-400')} title={item.error}>
-                    {item.error ? '配置异常' : `${statusLabel} · ${item.files.length} 个文件`}
+                  <span role={currentTask ? 'status' : undefined} className={cn('flex items-center gap-1 text-xs mt-1 h-5', currentTask ? actionStatusColors[taskStatus] : item.error ? 'text-amber-600 dark:text-amber-400' : 'text-gray-500 dark:text-gray-400')} title={currentTask ? taskMessage : item.error}>
+                    {updating && !progressError && <RefreshCw className="h-3 w-3 animate-spin flex-shrink-0" />}
+                    <span className="truncate">{currentTask ? updating ? taskMessage : taskLabel : item.error ? '配置异常' : `${statusLabel} · ${item.files.length} 个文件`}</span>
                   </span>
                 </span>
               </button>
               <div className="flex gap-1 mt-3 pt-3 border-t border-gray-100 dark:border-gray-700/50">
-                {cardActions.map(([name, Icon]) => <button key={name} type="button" title={`${name === 'update' ? '更新' : actionLabels[name]} ${item.name}`} disabled={busy || !!item.error || !info?.capabilities.compose} className={cn(cardActionClass, cardActionColors[name])} onClick={() => requestAction(name, item, [])}><Icon className="h-4 w-4" /><span>{name === 'update' ? '更新' : actionLabels[name]}</span></button>)}
+                {updating ? progressError ? <button type="button" className={cn(cardActionClass, 'text-primary-600 dark:text-primary-400')} disabled={fetchingProgress} onClick={() => refreshProgress()}><RefreshCw className={cn('h-4 w-4', fetchingProgress && 'animate-spin')} />刷新进度</button> : <div className="flex-1 flex items-center justify-center gap-2 px-1 py-1.5 bg-primary-50 dark:bg-primary-900/20 rounded-lg border border-primary-200 dark:border-primary-800 whitespace-nowrap text-xs font-medium text-primary-600 dark:text-primary-400">
+                  <RefreshCw className="h-4 w-4 animate-spin flex-shrink-0" /><span>{taskLabel}</span>
+                </div> : cardActions.map(([name, Icon]) => <button key={name} type="button" title={`${name === 'update' ? '更新' : actionLabels[name]} ${item.name}`} disabled={mutating || !!item.error || !info?.capabilities.compose} className={cn(cardActionClass, cardActionColors[name])} onClick={() => requestAction(name, item, [])}><Icon className="h-4 w-4" /><span>{name === 'update' ? '更新' : actionLabels[name]}</span></button>)}
                 <button type="button" aria-label={`查看 ${item.name} 的容器`} title="查看容器" className={cn(cardActionClass, 'text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700')} onClick={() => viewContainers(item)}><Server className="h-4 w-4" /><span>容器</span></button>
               </div>
+              {currentTask && progress?.isDone && progress.status !== 'succeeded' && <p role="alert" className={cn('mt-3 text-xs whitespace-pre-wrap break-words', actionStatusColors[taskStatus])}>{progress.message}</p>}
             </article>
           })}
         </div> : <div className="text-center py-12">
@@ -321,8 +343,8 @@ export function Compose({ onDirty, initialTarget, onOpenContainers }) {
             </select>
             <button type="button" className="btn-icon-secondary flex-shrink-0 disabled:opacity-50" aria-label="重新加载文件" title="重新加载文件" disabled={busy} onClick={async () => { if (await canLeave()) { setMessage(''); setReload(value => value + 1) } }}><RefreshCw className="h-4 w-4" /></button>
           </div>
-          <textarea ref={editor} id="compose-editor" aria-label="项目配置内容" aria-invalid={invalid || undefined} aria-describedby={invalid || currentValidation?.status === 'unavailable' ? 'compose-validation' : undefined} spellCheck={false} wrap="off" readOnly={!loaded || busy} className={cn('input block text-sm font-mono leading-6 min-h-[320px] sm:min-h-[420px] resize-y overflow-auto', invalid && 'border-red-400 dark:border-red-500 focus:ring-red-500')} value={content} onChange={e => setContent(e.target.value)} onKeyDown={event => {
-            if (event.key === 'Tab' && !busy && loaded) {
+          <textarea ref={editor} id="compose-editor" aria-label="项目配置内容" aria-invalid={invalid || undefined} aria-describedby={invalid || currentValidation?.status === 'unavailable' ? 'compose-validation' : undefined} spellCheck={false} wrap="off" readOnly={!loaded || mutating} className={cn('input block text-sm font-mono leading-6 min-h-[320px] sm:min-h-[420px] resize-y overflow-auto', invalid && 'border-red-400 dark:border-red-500 focus:ring-red-500')} value={content} onChange={e => setContent(e.target.value)} onKeyDown={event => {
+            if (event.key === 'Tab' && !mutating && loaded) {
               event.preventDefault()
               const element = event.currentTarget
               const start = element.selectionStart
@@ -338,13 +360,18 @@ export function Compose({ onDirty, initialTarget, onOpenContainers }) {
             </div>
           </Notice></div>}
           <div className="flex flex-wrap gap-2">
-            <button type="button" className="btn-secondary gap-2 disabled:opacity-50" disabled={busy || !loaded || !dirty || (invalid && !currentValidation.syntaxValid)} onClick={() => save(false)}><Save className="h-4 w-4" />保存</button>
-            <button type="button" className="btn-primary disabled:opacity-50" disabled={busy || !loaded || !!project.error || !info?.capabilities.compose || invalid} onClick={async () => {
+            <button type="button" className="btn-secondary gap-2 disabled:opacity-50" disabled={mutating || !loaded || !dirty || (invalid && !currentValidation.syntaxValid)} onClick={() => save(false)}><Save className="h-4 w-4" />保存</button>
+            <button type="button" className="btn-primary disabled:opacity-50" disabled={mutating || !loaded || !!project.error || !info?.capabilities.compose || invalid} onClick={async () => {
               if (await confirm({ title: '保存并部署', message: `部署 ${project.name}${services.length ? ` 的 ${services.join('、')}` : ' 的全部服务'}？将保存并应用当前配置；卷内数据无法回退。`, confirmText: '保存并部署' })) save(true)
             }}>保存并部署</button>
           </div>
         </div>
         <div className="px-4 sm:px-6 py-4 border-t border-gray-200 dark:border-gray-700 space-y-3">
+          {projectTask && <div role="status" className={cn('flex items-start gap-2 px-3 py-2 rounded-lg bg-gray-50 dark:bg-gray-700/30 text-xs', actionStatusColors[taskStatus])}>
+            {taskRunning && !progressError ? <RefreshCw className="h-4 w-4 animate-spin flex-shrink-0" /> : progress?.status === 'succeeded' ? <Check className="h-4 w-4 flex-shrink-0" /> : <AlertCircle className="h-4 w-4 flex-shrink-0" />}
+            <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{taskMessage}</span>
+            {progressError ? <button type="button" className="flex-shrink-0 hover:underline disabled:opacity-50" disabled={fetchingProgress} onClick={() => refreshProgress()}>刷新进度</button> : taskRunning && <span className="flex-shrink-0">{taskLabel}</span>}
+          </div>}
           <div className="flex flex-wrap items-center gap-3"><h4 className="text-sm font-semibold">服务</h4><span className="text-xs text-gray-500 dark:text-gray-400">{services.length ? `已选 ${services.length} 项` : '全部服务'}</span><button type="button" className="inline-flex items-center gap-1.5 ml-auto text-xs text-primary-600 dark:text-primary-400 hover:underline" onClick={() => viewContainers(project)}><Server className="h-4 w-4" />查看容器</button></div>
           <div role="group" aria-label="服务选择" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {project.services.map(service => {
@@ -375,7 +402,7 @@ export function Compose({ onDirty, initialTarget, onOpenContainers }) {
           </div>
           <div className="flex items-center gap-2">
             <button type="button" className={cn('btn-secondary flex-1 sm:flex-none gap-2 px-3 sm:px-4 disabled:opacity-50', running ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400')} disabled={actionDisabled} onClick={() => requestAction(running ? 'stop' : 'start')}>{running ? <Square className="h-4 w-4" /> : <Play className="h-4 w-4" />}{running ? '停止' : '启动'}</button>
-            <button type="button" className="btn-secondary flex-1 sm:flex-none gap-2 px-3 sm:px-4 text-purple-600 dark:text-purple-400 disabled:opacity-50" title="拉取并更新" disabled={actionDisabled} onClick={() => requestAction('update')}><RefreshCw className="h-4 w-4" />更新</button>
+            <button type="button" className={cn('btn-secondary flex-1 sm:flex-none gap-2 px-3 sm:px-4 disabled:opacity-50', projectTask && taskRunning && task.action === 'update' ? 'text-primary-600 dark:text-primary-400' : 'text-purple-600 dark:text-purple-400')} title="拉取并更新" disabled={actionDisabled} onClick={() => requestAction('update')}><RefreshCw className={cn('h-4 w-4', projectTask && taskRunning && task.action === 'update' && 'animate-spin')} />{projectTask && taskRunning && task.action === 'update' ? '更新中' : '更新'}</button>
             <ComposeActionMenu key={project.id} items={running && hasStopped ? [['start', Play], ...moreActions] : moreActions} disabled={actionDisabled} onAction={requestAction} />
           </div>
         </div>
@@ -393,7 +420,6 @@ export function Compose({ onDirty, initialTarget, onOpenContainers }) {
           </div>
         </form>
       </Dialog>}
-      {task && <TaskProgressDialog task={task} open={progressOpen} onClose={() => setProgressOpen(false)} />}
     </div>
   )
 }
