@@ -208,7 +208,9 @@ func (m *Manager) Projects(ctx context.Context) ([]Project, error) {
 		}
 		if entry.IsDir() {
 			rel, _ := filepath.Rel(root, path)
-			if strings.Count(rel, string(filepath.Separator)) >= 4 {
+			// 自动发现只扫描根目录和一级项目目录，避免把升级备份及应用数据中的配置识别为新项目。
+			// 深层真实项目仍由容器标签或显式接管记录发现，不依赖目录扫描。
+			if strings.Count(rel, string(filepath.Separator)) >= 1 {
 				return filepath.SkipDir
 			}
 			return nil
