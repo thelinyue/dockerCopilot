@@ -26,7 +26,13 @@ func NewUpdateProgramLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Upd
 
 func (l *UpdateProgramLogic) UpdateProgram() (resp *types.Resp, err error) {
 	resp = &types.Resp{}
-	err = utiles.UpdateProgram(l.svcCtx)
+	taskID, err := l.svcCtx.RunTask("更新 DockerCopilot 程序", func(id string) error {
+		if err := utiles.UpdateProgram(l.svcCtx); err != nil {
+			return err
+		}
+		go func() { time.Sleep(10 * time.Second); l.svcCtx.Operation.Lock(); os.Exit(1) }()
+		return nil
+	})
 	if err != nil {
 		resp.Code = 500
 		resp.Msg = err.Error()
@@ -35,10 +41,6 @@ func (l *UpdateProgramLogic) UpdateProgram() (resp *types.Resp, err error) {
 	}
 	resp.Code = 200
 	resp.Msg = "success"
-	go func() {
-		time.Sleep(10 * time.Second)
-		os.Exit(1)
-	}()
-	resp.Data = map[string]interface{}{}
+	resp.Data = map[string]string{"taskID": taskID}
 	return resp, nil
 }

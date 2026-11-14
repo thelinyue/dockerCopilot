@@ -12,13 +12,15 @@ import (
 	image "github.com/onlyLTY/dockerCopilot/internal/handler/image"
 	progress "github.com/onlyLTY/dockerCopilot/internal/handler/progress"
 	version "github.com/onlyLTY/dockerCopilot/internal/handler/version"
+	"github.com/onlyLTY/dockerCopilot/internal/management"
 	"github.com/onlyLTY/dockerCopilot/internal/svc"
 
 	"github.com/zeromicro/go-zero/rest"
 )
 
-func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
-	server.AddRoutes(
+func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext, manager *management.Manager) {
+	manager.Routes(server)
+	addRoutes(server, manager,
 		[]rest.Route{
 			{
 				Method:  http.MethodGet,
@@ -28,7 +30,7 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 		},
 	)
 
-	server.AddRoutes(
+	addRoutes(server, manager,
 		[]rest.Route{
 			{
 				Method:  http.MethodPost,
@@ -39,7 +41,7 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 		rest.WithPrefix("/api"),
 	)
 
-	server.AddRoutes(
+	addRoutes(server, manager,
 		[]rest.Route{
 			{
 				Method:  http.MethodPost,
@@ -68,40 +70,14 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 			},
 			{
 				Method:  http.MethodGet,
-				Path:    "/container/backup",
-				Handler: container.BackupHandler(serverCtx),
-			},
-			{
-				Method:  http.MethodGet,
-				Path:    "/container/backup2compose",
-				Handler: container.Backup2composeHandler(serverCtx),
-			},
-			{
-				Method:  http.MethodDelete,
-				Path:    "/container/backups",
-				Handler: container.DelRestoreHandler(serverCtx),
-			},
-			{
-				Method:  http.MethodPost,
-				Path:    "/container/backups/restore",
-				Handler: container.RestoreHandler(serverCtx),
-			},
-			{
-				Method:  http.MethodGet,
-				Path:    "/container/listBackups",
-				Handler: container.ListBackupsHandler(serverCtx),
-			},
-			{
-				Method:  http.MethodGet,
 				Path:    "/containers",
 				Handler: container.ContainersListHandler(serverCtx),
 			},
 		},
-		rest.WithJwt(serverCtx.Config.Auth.AccessSecret),
 		rest.WithPrefix("/api"),
 	)
 
-	server.AddRoutes(
+	addRoutes(server, manager,
 		[]rest.Route{
 			{
 				Method:  http.MethodPost,
@@ -114,11 +90,11 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 				Handler: icons.ObtainHandler(serverCtx),
 			},
 		},
-		rest.WithJwt(serverCtx.Config.Auth.AccessSecret),
+		rest.WithMaxBytes(16<<20),
 		rest.WithPrefix("/api/icons"),
 	)
 
-	server.AddRoutes(
+	addRoutes(server, manager,
 		[]rest.Route{
 			{
 				Method:  http.MethodDelete,
@@ -131,11 +107,10 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 				Handler: image.ImagesListHandler(serverCtx),
 			},
 		},
-		rest.WithJwt(serverCtx.Config.Auth.AccessSecret),
 		rest.WithPrefix("/api"),
 	)
 
-	server.AddRoutes(
+	addRoutes(server, manager,
 		[]rest.Route{
 			{
 				Method:  http.MethodGet,
@@ -143,11 +118,10 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 				Handler: progress.GetProgressHandler(serverCtx),
 			},
 		},
-		rest.WithJwt(serverCtx.Config.Auth.AccessSecret),
 		rest.WithPrefix("/api"),
 	)
 
-	server.AddRoutes(
+	addRoutes(server, manager,
 		[]rest.Route{
 			{
 				Method:  http.MethodPut,
@@ -160,7 +134,13 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext) {
 				Handler: version.VersionHandler(serverCtx),
 			},
 		},
-		rest.WithJwt(serverCtx.Config.Auth.AccessSecret),
 		rest.WithPrefix("/api"),
 	)
+}
+
+func addRoutes(server *rest.Server, manager *management.Manager, routes []rest.Route, options ...rest.RouteOption) {
+	for i := range routes {
+		routes[i].Handler = manager.Wrap(routes[i].Handler)
+	}
+	server.AddRoutes(routes, options...)
 }

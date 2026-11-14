@@ -1,7 +1,8 @@
+import { DeviceImage } from './DeviceImage.jsx'
 import React, { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { HardDrive, Trash2, RefreshCw, Link, BrushCleaning, X, AlertCircle, CheckCircle } from 'lucide-react'
-import { imageAPI } from '../api/client.js'
+import { useDeviceAPI } from '../hooks/useDevice.jsx'
 import { cn } from '../utils/cn.js'
 import { getImageLogo } from '../config/imageLogos.js'
 
@@ -14,7 +15,7 @@ function SafeImage({ src, alt, className, fallback }) {
   }
 
   return (
-    <img
+    <DeviceImage
       src={src}
       alt={alt}
       className={className}
@@ -24,6 +25,7 @@ function SafeImage({ src, alt, className, fallback }) {
 }
 
 export function Images() {
+  const { deviceId, imageAPI } = useDeviceAPI()
   const [images, setImages] = useState([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -35,14 +37,14 @@ export function Images() {
 
   // 获取自定义图标配置
   const { data: customIcons = {} } = useQuery({
-    queryKey: ['customIcons'],
+    queryKey: [deviceId, 'customIcons'],
     queryFn: async () => {
       try {
         const response = await imageAPI.getIcons()
         if (response.data.code === 200 || response.data.code === 0) {
           const icons = response.data.data || {}
           // update localStorage
-          localStorage.setItem('docker_copilot_image_logos', JSON.stringify(icons))
+          localStorage.setItem(`docker_copilot_image_logos:${deviceId}`, JSON.stringify(icons))
           return icons
         }
       } catch (err) {
@@ -52,7 +54,7 @@ export function Images() {
     },
     // 初始数据尝试从localStorage获取
     initialData: () => {
-      const saved = localStorage.getItem('docker_copilot_image_logos')
+      const saved = localStorage.getItem(`docker_copilot_image_logos:${deviceId}`)
       if (saved) {
         try {
           return JSON.parse(saved)
@@ -64,10 +66,10 @@ export function Images() {
     }
   })
 
-  const fetchImages = async () => {
+  const fetchImages = async (options = {}) => {
     try {
       setIsLoading(true)
-      setError(null)
+      if (!options.preserveError) setError(null)
 
       const response = await imageAPI.getImages()
 
@@ -80,7 +82,7 @@ export function Images() {
       }
     } catch (error) {
       const errorMsg = error.response?.data?.msg || error.message || '网络错误，请检查后端服务'
-      setError(errorMsg)
+      setError(previous => options.preserveError && previous ? `${previous}；刷新列表失败：${errorMsg}` : errorMsg)
       setImages([])
     } finally {
       setIsLoading(false)
@@ -112,40 +114,25 @@ export function Images() {
     try {
       setIsLoading(true)
       setError(null)
-
-      let imagesToDelete = []
-      if (type === 'dangling') {
-        imagesToDelete = images.filter(img => img.tag === 'None' || img.tag === '<none>')
-      } else if (type === 'unused') {
-        imagesToDelete = images.filter(img => !img.inUsed)
-      }
-
-      if (imagesToDelete.length === 0) {
-        setError('没有找到需要清理的镜像')
-        setIsLoading(false)
-        return
-      }
-
-      // 批量删除
-      const deletePromises = imagesToDelete.map(image =>
-        imageAPI.deleteImage(image.id, false)
-      )
-
-      await Promise.all(deletePromises)
-
-      const message = type === 'dangling'
-        ? `成功清理 ${imagesToDelete.length} 个无Tag镜像`
-        : `成功清理 ${imagesToDelete.length} 个未使用的镜像`
+      const response = await imageAPI.pruneImages(type)
+      const { changed, spaceReclaimed } = response.data.data
+      const units = ['B', 'KB', 'MB', 'GB', 'TB']
+      const unit = spaceReclaimed > 0 ? Math.min(Math.floor(Math.log(spaceReclaimed) / Math.log(1024)), units.length - 1) : 0
+      const reclaimed = `${(spaceReclaimed / 1024 ** unit).toFixed(unit ? 1 : 0)} ${units[unit]}`
+      const message = changed ? `镜像清理完成，释放 ${reclaimed}` : '没有可清理的镜像'
 
       setSuccessModal({ isOpen: true, message })
-      fetchImages()
       setTimeout(() => setSuccessModal({ isOpen: false, message: '' }), 3000)
     } catch (error) {
       const errorMsg = error.response?.data?.msg || error.message || '清理镜像失败'
       setError(errorMsg)
-      setIsLoading(false)
+    } finally {
+      // 清理出错或超时也可能已回收部分镜像，刷新实际状态并保留错误提示。
+      await fetchImages({ preserveError: true })
     }
   }
+
+  const pruneCandidates = type => images.filter(img => !img.inUsed && (type === 'unused' || img.tag === 'None' || img.tag === '<none>'))
 
   const formatImageSize = (sizeStr) => {
     if (!sizeStr) return '0 MB'
@@ -183,15 +170,14 @@ export function Images() {
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center space-y-4 sm:space-y-0">
           <div>
             <h2 className="text-2xl font-bold text-gray-900 dark:text-white">镜像管理</h2>
-            <p className="text-gray-600 dark:text-gray-400 mt-1">查看和管理Docker镜像</p>
           </div>
           <div className="flex items-center gap-2">
             <button
               onClick={() => {
-                const imagesToDelete = images.filter(img => img.tag === 'None' || img.tag === '<none>')
+                const imagesToDelete = pruneCandidates('dangling')
                 setPruneModal({ isOpen: true, type: 'dangling', images: imagesToDelete })
               }}
-              disabled={isLoading || images.filter(img => img.tag === 'None' || img.tag === '<none>').length === 0}
+              disabled={isLoading || pruneCandidates('dangling').length === 0}
               className="flex items-center gap-2 px-4 py-2 bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-200 rounded-lg hover:bg-orange-200 dark:hover:bg-orange-800 transition-colors disabled:opacity-50 text-sm font-medium"
             >
               <BrushCleaning className="h-4 w-4" />
@@ -199,10 +185,10 @@ export function Images() {
             </button>
             <button
               onClick={() => {
-                const imagesToDelete = images.filter(img => !img.inUsed)
+                const imagesToDelete = pruneCandidates('unused')
                 setPruneModal({ isOpen: true, type: 'unused', images: imagesToDelete })
               }}
-              disabled={isLoading || images.filter(img => !img.inUsed).length === 0}
+              disabled={isLoading || pruneCandidates('unused').length === 0}
               className="flex items-center gap-2 px-4 py-2 bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-200 rounded-lg hover:bg-purple-200 dark:hover:bg-purple-800 transition-colors disabled:opacity-50 text-sm font-medium"
             >
               <BrushCleaning className="h-4 w-4" />
@@ -503,10 +489,11 @@ export function Images() {
                 </div>
                 <div className="flex-1">
                   <h3 className="text-lg font-bold text-gray-900 dark:text-white">
-                    {pruneModal.type === 'dangling' ? '删除无Tag镜像' : '删除未使用的镜像'}
+                    {pruneModal.type === 'dangling' ? '清理无Tag镜像' : '清理未使用镜像'}
                   </h3>
                   <p className="text-sm text-gray-600 dark:text-gray-400 mt-2">
-                    将永久删除 <span className="font-semibold text-orange-600 dark:text-orange-400">{pruneModal.images.length} 个</span> 镜像，此操作不可恢复
+                    清理当前设备{pruneModal.type === 'dangling' ? '未被容器引用的无Tag镜像' : '所有未被容器引用的镜像'}，不可恢复。
+                    当前列表 <span className="font-semibold text-orange-600 dark:text-orange-400">{pruneModal.images.length} 个</span>，停止的容器所用镜像也会保留。
                   </p>
                 </div>
               </div>
@@ -560,10 +547,10 @@ export function Images() {
                 {isLoading ? (
                   <span className="flex items-center justify-center gap-2">
                     <RefreshCw className="h-4 w-4 animate-spin" />
-                    删除中...
+                    清理中...
                   </span>
                 ) : (
-                  '确认删除'
+                  '确认清理'
                 )}
               </button>
             </div>

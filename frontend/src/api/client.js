@@ -40,7 +40,7 @@ const API_BASE_URL = getAPIBaseURL()
 // 创建axios实例
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 10000,
+  timeout: 35000,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -62,8 +62,19 @@ apiClient.interceptors.request.use(
 
 // 响应拦截器 - 处理认证过期
 apiClient.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    const code = response.data?.code
+    if (typeof code === 'number' && code !== 200 && code !== 0) {
+      const error = new Error(response.data.msg || '操作失败')
+      error.response = response
+      return Promise.reject(error)
+    }
+    return response
+  },
   (error) => {
+    if (error.response?.data?.msg) error.message = error.response.data.msg
+    else if (error.code === 'ECONNABORTED') error.message = '请求超时，变更结果尚未确定，请在原设备任务列表确认，避免重复提交。'
+    else if (error.code === 'ERR_NETWORK') error.message = '无法连接服务，请检查设备地址、网络或跨域配置。'
     if (error.response?.status === 401) {
       // 只在有token的情况下移除它
       if (localStorage.getItem('docker_copilot_token')) {
@@ -87,66 +98,100 @@ export const authAPI = {
   },
 }
 
-// 版本相关API
-export const versionAPI = {
-  getVersion: (type) => {
-    // 如果type参数为空，则不添加查询参数
-    if (!type) {
-      return apiClient.get('/api/version')
-    }
-    return apiClient.get(`/api/version?type=${type}`)
-  },
-  updateProgram: () => apiClient.put('/api/program'),
-}
+export function createDeviceAPI(deviceId = 'local') {
+  // 每个组件持有固定设备的 API，异步轮询及批量操作不会跟随设备选择变化。
+  const rootClient = apiClient
+  const request = (method, url, data, config = {}) => rootClient.request({
+    ...config, method, url, data,
+    headers: { ...config.headers, 'X-DockerCopilot-Device-ID': deviceId },
+  })
+  const scopedClient = {
+    get: (url, config) => request('get', url, undefined, config),
+    delete: (url, config) => request('delete', url, undefined, config),
+    post: (url, data, config) => request('post', url, data, config),
+    put: (url, data, config) => request('put', url, data, config),
+  }
+  // 版本相关API
+  const versionAPI = {
+    getVersion: (type) => {
+      // 如果type参数为空，则不添加查询参数
+      if (!type) {
+        return scopedClient.get('/api/version')
+      }
+      return scopedClient.get(`/api/version?type=${type}`)
+    },
+    updateProgram: () => scopedClient.put('/api/program'),
+  }
 
-// 容器相关API
-export const containerAPI = {
-  getContainers: () => apiClient.get('/api/containers'),
-  startContainer: (id) => apiClient.post(`/api/container/${id}/start`),
-  stopContainer: (id) => apiClient.post(`/api/container/${id}/stop`),
-  restartContainer: (id) => apiClient.post(`/api/container/${id}/restart`),
-  renameContainer: (id, newName) => {
-    return apiClient.post(`/api/container/${id}/rename?newName=${encodeURIComponent(newName)}`)
-  },
-  updateContainer: (id, containerName, imageNameAndTag, delOldContainer) => {
-    const formData = new FormData()
-    formData.append('containerName', containerName)
-    formData.append('imageNameAndTag', imageNameAndTag)
-    formData.append('delOldContainer', delOldContainer ? 'true' : 'false')
-    return apiClient.post(`/api/container/${id}/update`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' }
-    })
-  },
-  backupContainer: () => apiClient.get('/api/container/backup'),
-  listBackups: () => apiClient.get('/api/container/listBackups'),
-  restoreContainer: (filename) => {
-    return apiClient.post(`/api/container/backups/${filename}/restore`)
-  },
-  deleteBackup: (filename) => apiClient.delete(`/api/container/backups?filename=${encodeURIComponent(filename)}`),
-  backupToCompose: () => apiClient.get('/api/container/backup2compose'),
-}
-
-// 镜像相关API
-export const imageAPI = {
-  getImages: () => apiClient.get('/api/images'),
-  getIcons: () => apiClient.get('/api/icons'),
-  deleteImage: (id, force = false) => apiClient.delete(`/api/image/${id}?force=${force}`),
-  uploadIcon: (file, imageName, containerName) => {
-    const formData = new FormData()
-    formData.append('file', file)
-    formData.append('imageName', imageName)
-    if (containerName) {
+  // 容器相关API
+  const containerAPI = {
+    getContainers: () => scopedClient.get('/api/containers'),
+    startContainer: (id) => scopedClient.post(`/api/container/${id}/start`),
+    stopContainer: (id) => scopedClient.post(`/api/container/${id}/stop`),
+    restartContainer: (id) => scopedClient.post(`/api/container/${id}/restart`),
+    renameContainer: (id, newName) => {
+      return scopedClient.post(`/api/container/${id}/rename?newName=${encodeURIComponent(newName)}`)
+    },
+    updateContainer: (id, containerName, imageNameAndTag, delOldContainer) => {
+      const formData = new FormData()
       formData.append('containerName', containerName)
-    }
-    return apiClient.post('/api/icons', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' }
-    })
-  },
+      formData.append('imageNameAndTag', imageNameAndTag)
+      formData.append('delOldContainer', delOldContainer ? 'true' : 'false')
+      return scopedClient.post(`/api/container/${id}/update`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
+    },
+  }
+
+  // 镜像相关API
+  const imageAPI = {
+    getImages: () => scopedClient.get('/api/images'),
+    getIcons: () => scopedClient.get('/api/icons'),
+    pruneImages: (type) => scopedClient.post('/api/image/prune', { type }, { timeout: 120000 }),
+    deleteImage: (id, force = false) => scopedClient.delete(`/api/image/${id}?force=${force}`),
+    uploadIcon: (file, imageName, containerName) => {
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('imageName', imageName)
+      if (containerName) {
+        formData.append('containerName', containerName)
+      }
+      return scopedClient.post('/api/icons', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
+    },
+  }
+
+  // 进度查询API
+  const progressAPI = {
+    getProgress: (taskid) => scopedClient.get(`/api/progress/${taskid}`),
+  }
+
+
+  const result = async (promise) => (await promise).data.data
+  const managementAPI = {
+    info: () => result(scopedClient.get('/api/node/info')),
+    settings: () => result(scopedClient.get('/api/settings')),
+    saveSettings: (settings) => result(scopedClient.put('/api/settings', settings)),
+    tasks: () => result(scopedClient.get('/api/tasks')),
+    check: () => result(scopedClient.post('/api/checks')),
+    autoUpdate: () => result(scopedClient.post('/api/auto-update')),
+    projects: () => result(scopedClient.get('/api/compose/projects')),
+    importProject: (name, files) => result(scopedClient.post('/api/compose/projects', { name, files })),
+    readFile: (id, index) => result(scopedClient.get(`/api/compose/projects/${id}/files/${index}`)),
+    validateFile: (id, index, content, signal) => result(scopedClient.post(`/api/compose/projects/${id}/files/${index}/validate`, { content }, { signal })),
+    saveFile: (id, index, original, content) => result(scopedClient.put(`/api/compose/projects/${id}/files/${index}`, { original, content })),
+    composeAction: (id, action, services = []) => result(scopedClient.post(`/api/compose/projects/${id}/actions`, { action, services })),
+    icon: (name, signal) => scopedClient.get(`/api/icon-file?name=${encodeURIComponent(name)}`, { responseType: 'blob', signal }),
+  }
+  return { versionAPI, containerAPI, imageAPI, progressAPI, managementAPI }
 }
 
-// 进度查询API
-export const progressAPI = {
-  getProgress: (taskid) => apiClient.get(`/api/progress/${taskid}`),
+export const deviceAPI = {
+  list: async () => (await apiClient.get('/api/devices', { headers: { 'X-DockerCopilot-Device-ID': 'local' } })).data.data,
+  save: async (device) => (await apiClient.request({ method: device.id ? 'put' : 'post', url: '/api/devices' + (device.id ? '/' + device.id : ''), data: device, headers: { 'X-DockerCopilot-Device-ID': 'local' } })).data.data,
+  remove: (id) => apiClient.delete(`/api/devices/${id}`, { headers: { 'X-DockerCopilot-Device-ID': 'local' } }),
+  test: async (id) => (await apiClient.post(`/api/devices/${id}/test`, null, { headers: { 'X-DockerCopilot-Device-ID': 'local' } })).data.data,
 }
 
 // GitHub API - 用于检查前端更新

@@ -1,11 +1,13 @@
+import { DeviceImage } from './DeviceImage.jsx'
 import React, { useState, useEffect } from 'react'
 import { Search, Copy, Eye, Star, Check, X } from 'lucide-react'
 import { cn } from '../utils/cn.js'
 import { builtInImageLogos, getSupportedImageNames } from '../config/imageLogos.js'
 import { useQuery } from '@tanstack/react-query'
-import { imageAPI } from '../api/client.js'
+import { useDeviceAPI } from '../hooks/useDevice.jsx'
 
 export function Icons() {
+  const { deviceId, imageAPI, managementAPI } = useDeviceAPI()
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('all')
   const [copiedIcon, setCopiedIcon] = useState(null)
@@ -14,7 +16,7 @@ export function Icons() {
 
   // 获取自定义图标
   const { data: customIcons = {} } = useQuery({
-    queryKey: ['customIcons'],
+    queryKey: [deviceId, 'customIcons'],
     queryFn: async () => {
       const response = await imageAPI.getIcons()
       if (response.data.code === 200 || response.data.code === 0) {
@@ -28,7 +30,7 @@ export function Icons() {
 
   // 从localStorage加载收藏
   useEffect(() => {
-    const savedFavorites = localStorage.getItem('docker_copilot_icon_favorites')
+    const savedFavorites = localStorage.getItem(`docker_copilot_icon_favorites:${deviceId}`)
     if (savedFavorites) {
       try {
         setFavorites(JSON.parse(savedFavorites))
@@ -41,7 +43,7 @@ export function Icons() {
   // 保存收藏到localStorage
   const saveFavorites = (newFavorites) => {
     setFavorites(newFavorites)
-    localStorage.setItem('docker_copilot_icon_favorites', JSON.stringify(newFavorites))
+    localStorage.setItem(`docker_copilot_icon_favorites:${deviceId}`, JSON.stringify(newFavorites))
   }
 
   // 切换收藏状态
@@ -55,12 +57,29 @@ export function Icons() {
   // 复制图标URL到剪贴板
   const copyToClipboard = async (url, iconName) => {
     try {
-      await navigator.clipboard.writeText(url)
+      let link = url
+      if (url.startsWith('/src/config/image/')) {
+        const response = await managementAPI.icon(url.split('/').pop())
+        link = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(response.data) })
+      }
+      await navigator.clipboard.writeText(link)
       setCopiedIcon(iconName)
       setTimeout(() => setCopiedIcon(null), 2000)
     } catch (err) {
       console.error('复制失败:', err)
     }
+  }
+
+  const openIcon = async url => {
+    if (!url.startsWith('/src/config/image/')) { window.open(url, '_blank', 'noopener,noreferrer'); return }
+    const preview = window.open('', '_blank')
+    if (preview) preview.opener = null
+    try {
+      const response = await managementAPI.icon(url.split('/').pop())
+      const objectURL = URL.createObjectURL(response.data)
+      if (preview) preview.location.href = objectURL
+      setTimeout(() => URL.revokeObjectURL(objectURL), 60000)
+    } catch (error) { preview?.close(); alert(error.message || '图标读取失败') }
   }
 
   // 通用图标过滤函数
@@ -103,8 +122,7 @@ export function Icons() {
     <div className="max-w-7xl mx-auto">
       {/* 页面头部 */}
       <div className="px-4 sm:px-6 py-4">
-        <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">图标库</h2>
-        <p className="text-gray-600 dark:text-gray-400">浏览和管理Docker镜像图标</p>
+        <h2 className="text-2xl font-bold text-gray-900 dark:text-white">图标库</h2>
       </div>
 
       {/* 搜索和过滤 */}
@@ -179,7 +197,7 @@ export function Icons() {
                 >
                   <div className="card p-4 rounded-2xl hover:shadow-lg transition-all h-full flex flex-col items-center justify-center bg-blue-50/50 dark:bg-blue-900/10 border-blue-100 dark:border-blue-800">
                     <div className="relative w-full mb-3">
-                      <img
+                      <DeviceImage
                         src={url}
                         alt={name}
                         className="w-12 h-12 mx-auto object-contain rounded-lg"
@@ -218,7 +236,7 @@ export function Icons() {
                           copyToClipboard(url, name)
                         }}
                         className="p-1 text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 rounded transition-colors"
-                        title="复制链接"
+                        title={url.startsWith('/src/config/image/') ? '复制图像数据链接' : '复制链接'}
                       >
                         {copiedIcon === name ? (
                           <Check className="h-4 w-4 text-green-500" />
@@ -229,7 +247,7 @@ export function Icons() {
                       <button
                         onClick={(e) => {
                           e.stopPropagation()
-                          window.open(url, '_blank')
+                          openIcon(url)
                         }}
                         className="p-1 text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 rounded transition-colors"
                         title="查看原图"
@@ -261,7 +279,7 @@ export function Icons() {
                 >
                   <div className="card p-4 rounded-2xl hover:shadow-lg transition-all h-full flex flex-col items-center justify-center">
                     <div className="relative w-full mb-3">
-                      <img
+                      <DeviceImage
                         src={url}
                         alt={name}
                         className="w-12 h-12 mx-auto object-contain rounded-lg"
@@ -300,7 +318,7 @@ export function Icons() {
                           copyToClipboard(url, name)
                         }}
                         className="p-1 text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 rounded transition-colors"
-                        title="复制链接"
+                        title={url.startsWith('/src/config/image/') ? '复制图像数据链接' : '复制链接'}
                       >
                         {copiedIcon === name ? (
                           <Check className="h-4 w-4 text-green-500" />
@@ -311,7 +329,7 @@ export function Icons() {
                       <button
                         onClick={(e) => {
                           e.stopPropagation()
-                          window.open(url, '_blank')
+                          openIcon(url)
                         }}
                         className="p-1 text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 rounded transition-colors"
                         title="查看原图"
@@ -360,7 +378,7 @@ export function Icons() {
 
               <div className="space-y-4">
                 <div className="flex justify-center">
-                  <img
+                  <DeviceImage
                     src={selectedIcon.url}
                     alt={selectedIcon.name}
                     className="w-32 h-32 object-contain rounded-lg border border-gray-200 dark:border-gray-700"
@@ -399,7 +417,7 @@ export function Icons() {
 
                 <div className="flex gap-3 pt-4">
                   <button
-                    onClick={() => window.open(selectedIcon.url, '_blank')}
+                    onClick={() => openIcon(selectedIcon.url)}
                     className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
                   >
                     在新窗口打开

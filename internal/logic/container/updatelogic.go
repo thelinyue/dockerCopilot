@@ -2,7 +2,6 @@ package container
 
 import (
 	"context"
-	"github.com/google/uuid"
 	"github.com/onlyLTY/dockerCopilot/internal/svc"
 	"github.com/onlyLTY/dockerCopilot/internal/types"
 	"github.com/onlyLTY/dockerCopilot/internal/utiles"
@@ -26,21 +25,19 @@ func NewUpdateLogic(ctx context.Context, svcCtx *svc.ServiceContext) *UpdateLogi
 
 func (l *UpdateLogic) Update(req *types.ContainerUpdateReq) (resp *types.Resp, err error) {
 	resp = &types.Resp{}
-	taskID := uuid.New().String()
-	go func() {
-		// Catch any panic and log the error
-		defer func() {
-			if r := recover(); r != nil {
-				l.Errorf("Recovered from panic in UpdateContainer: %v", r)
-			}
-		}()
+	taskID, err := l.svcCtx.RunTask("更新容器", func(taskID string) error {
 		imageNameAndTag := req.ImageNameAndTag
 		delOldContainer := os.Getenv("DelOldContainer") != "false"
-		err := utiles.UpdateContainer(l.svcCtx, req.Id, req.ContainerName, imageNameAndTag, delOldContainer, taskID)
-		if err != nil {
-			l.Errorf("Error in UpdateContainer: %v", err)
+		if req.DelOldContainer == "false" {
+			delOldContainer = false
 		}
-	}()
+		return utiles.UpdateContainer(l.svcCtx, req.Id, req.ContainerName, imageNameAndTag, delOldContainer, taskID)
+	})
+	if err != nil {
+		resp.Code = 409
+		resp.Msg = err.Error()
+		return resp, err
+	}
 	resp.Code = 200
 	resp.Msg = "success"
 	resp.Data = map[string]string{"taskID": taskID}

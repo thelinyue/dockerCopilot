@@ -9,7 +9,6 @@ services:
     environment:
       secretKey: ${secretKey:?请先运行 dev.ps1 setup}
       DOCKER_HOST: unix:///var/run/docker.sock
-      BACKUP_DIR: /data/backups
       TZ: Asia/Shanghai
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock

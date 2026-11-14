@@ -12,9 +12,9 @@ import (
 
 	"github.com/onlyLTY/dockerCopilot/internal/config"
 	"github.com/onlyLTY/dockerCopilot/internal/handler"
+	"github.com/onlyLTY/dockerCopilot/internal/management"
+	"github.com/onlyLTY/dockerCopilot/internal/node"
 	"github.com/onlyLTY/dockerCopilot/internal/svc"
-	"github.com/onlyLTY/dockerCopilot/internal/utiles"
-	"github.com/robfig/cron/v3"
 	"github.com/zeromicro/go-zero/core/conf"
 	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/rest"
@@ -27,12 +27,6 @@ import (
 var embeddedFront embed.FS
 
 var configFile = flag.String("f", "etc/dockerCopilot.yaml", "the config file")
-
-type UnauthorizedResponse struct {
-	Code int                    `json:"code"`
-	Msg  string                 `json:"msg"`
-	Data map[string]interface{} `json:"data"`
-}
 
 func main() {
 	logDir := "./logs"
@@ -51,15 +45,9 @@ func main() {
 		logx.Errorf("请确认secretKey设置正确，要求非纯数字且大于八位")
 		os.Exit(1)
 	}
-	server := rest.MustNewServer(c.RestConf, rest.WithCors("*"), rest.WithUnauthorizedCallback(
-		func(w http.ResponseWriter, r *http.Request, err error) {
-			response := UnauthorizedResponse{
-				Code: http.StatusUnauthorized, // 401
-				Msg:  "未授权",
-				Data: map[string]interface{}{},
-			}
-			httpx.WriteJson(w, http.StatusUnauthorized, response)
-		}))
+	// 管理器保留请求元数据日志；禁用会在 5xx 时转储认证头和配置正文的框架日志。
+	c.Middlewares.Log = false
+	server := rest.MustNewServer(c.RestConf, rest.WithCorsHeaders(node.DeviceHeader))
 	defer server.Stop()
 	ctx := svc.NewServiceContext(c)
 
@@ -80,29 +68,10 @@ export const customImageLogos = {
 		}
 	}
 
-	list, err := utiles.GetImagesList(ctx)
-	if err != nil {
-		logx.Errorf("panic获取镜像列表出错: %v", err)
-		panic(err)
-	}
-	go ctx.HubImageInfo.CheckUpdate(list)
-	corndanmu := cron.New(cron.WithParser(cron.NewParser(
-		cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow,
-	)))
-	_, err = corndanmu.AddFunc("30 * * * *", func() {
-		list, err := utiles.GetImagesList(ctx)
-		if err != nil {
-			logx.Errorf("panic获取镜像列表出错: %v", err)
-			panic(err)
-		}
-		ctx.HubImageInfo.CheckUpdate(list)
-	})
-	if err != nil {
-		logx.Errorf("panic添加定时任务出错: %v", err)
-		panic(err)
-	}
-	corndanmu.Start()
-	defer corndanmu.Stop()
+	manager := management.New(ctx)
+	manager.Start()
+	defer manager.Stop()
+
 	httpx.SetErrorHandler(func(err error) (int, any) {
 		switch e := err.(type) {
 		case *errors.CodeMsg:
@@ -117,7 +86,7 @@ export const customImageLogos = {
 			}
 		}
 	})
-	handler.RegisterHandlers(server, ctx)
+	handler.RegisterHandlers(server, ctx, manager)
 	RegisterHandlers(server)
 	fmt.Printf("Starting server at %s:%d...\n", c.Host, c.Port)
 	logx.Info("程序版本" + config.Version)

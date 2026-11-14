@@ -1,3 +1,4 @@
+import { DeviceImage } from './DeviceImage.jsx'
 import React, { useState } from 'react'
 import {
   Play,
@@ -8,10 +9,11 @@ import {
   Clock,
   Calendar,
   Package,
+  Boxes,
   X,
   Info
 } from 'lucide-react'
-import { containerAPI, progressAPI, imageAPI } from '../api/client.js'
+import { useDeviceAPI } from '../hooks/useDevice.jsx'
 import { cn } from '../utils/cn.js'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getImageLogo } from '../config/imageLogos.js'
@@ -65,7 +67,8 @@ function formatRunningTime(runningTime) {
   return result.trim()
 }
 
-export function Containers() {
+export function Containers({ scope, onClearScope, onOpenCompose }) {
+  const { deviceId, containerAPI, progressAPI, imageAPI } = useDeviceAPI()
   const queryClient = useQueryClient()
   const [selectedContainer, setSelectedContainer] = useState(null)
   // 添加批量操作相关的状态
@@ -91,7 +94,7 @@ export function Containers() {
 
   // 使用React Query获取容器列表
   const { data: containers = [], isLoading, refetch } = useQuery({
-    queryKey: ['containers'],
+    queryKey: [deviceId, 'containers'],
     queryFn: async () => {
       const response = await containerAPI.getContainers()
       if (response.data.code === 200 || response.data.code === 0) {
@@ -103,10 +106,25 @@ export function Containers() {
     },
     refetchInterval: 10000, // 每10秒自动刷新一次
   })
+  // 旧节点没有目录字段时按项目返回的容器 ID 匹配，避免同名项目串入筛选。
+  const projectContainers = containers.filter(container => !scope || (
+    container.composeProject === scope.projectName &&
+    (!scope.directory || (container.composeDirectory ? container.composeDirectory === scope.directory : scope.containerIds?.includes(container.id))) &&
+    (!scope.serviceName || container.composeService === scope.serviceName)
+  ))
+  const visibleContainers = projectContainers.filter(container => {
+    if (filterStatus === 'running') return container.status?.toLowerCase() === 'running'
+    if (filterStatus === 'stopped') return container.status?.toLowerCase() !== 'running'
+    if (filterStatus === 'update') return container.haveUpdate
+    return true
+  })
+  React.useEffect(() => {
+    setSelectedContainers([])
+  }, [scope, filterStatus])
 
   // 获取自定义图标配置
   const { data: customIcons = {} } = useQuery({
-    queryKey: ['customIcons'],
+    queryKey: [deviceId, 'customIcons'],
     queryFn: async () => {
       console.log('[Debug] 开始从服务器获取图标配置...')
       try {
@@ -116,7 +134,7 @@ export function Containers() {
           const icons = response.data.data || {}
           console.log('[Debug] 获取到的图标数据:', icons)
           // update localStorage
-          localStorage.setItem('docker_copilot_image_logos', JSON.stringify(icons))
+          localStorage.setItem(`docker_copilot_image_logos:${deviceId}`, JSON.stringify(icons))
           return icons
         }
       } catch (err) {
@@ -126,7 +144,7 @@ export function Containers() {
     },
     // 初始数据尝试从localStorage获取，避免闪烁
     initialData: () => {
-      const saved = localStorage.getItem('docker_copilot_image_logos')
+      const saved = localStorage.getItem(`docker_copilot_image_logos:${deviceId}`)
       if (saved) {
         try {
           const parsed = JSON.parse(saved)
@@ -167,7 +185,7 @@ export function Containers() {
       }
 
       // 立即更新本地状态，提供即时反馈
-      queryClient.setQueryData(['containers'], (oldData) => {
+      queryClient.setQueryData([deviceId, 'containers'], (oldData) => {
         if (!oldData) return oldData
 
         return oldData.map(container => {
@@ -200,6 +218,7 @@ export function Containers() {
       })
 
       // 延迟刷新以获取最新数据
+      await queryClient.invalidateQueries({ queryKey: [deviceId, 'composeProjects'] })
       setTimeout(() => {
         refetch()
       }, 1500)
@@ -224,6 +243,13 @@ export function Containers() {
 
   // 批量操作处理函数
   const handleBatchAction = async (action) => {
+    if (action === 'update' && containers.some(c => selectedContainers.includes(c.id) && c.composeProject)) {
+      const composeContainers = containers.filter(c => selectedContainers.includes(c.id) && c.composeProject)
+      const first = composeContainers[0]
+      const sameProject = composeContainers.every(c => c.composeProject === first.composeProject && c.composeDirectory === first.composeDirectory)
+      setConfirmModal({ isOpen: true, title: '按项目服务更新', message: '选中的容器包含项目服务，请在项目页面更新，或在自动更新页面按排除规则统一执行。', onConfirm: () => { setConfirmModal({ isOpen: false }); onOpenCompose?.(sameProject ? { ...first, composeService: '' } : null) } })
+      return
+    }
     try {
       // 为所有选中的容器设置加载状态
       selectedContainers.forEach(containerId => {
@@ -235,7 +261,7 @@ export function Containers() {
 
       // 立即更新本地状态提供即时反馈
       if (action === 'start' || action === 'stop' || action === 'restart') {
-        queryClient.setQueryData(['containers'], (oldData) => {
+        queryClient.setQueryData([deviceId, 'containers'], (oldData) => {
           if (!oldData) return oldData
 
           return oldData.map(container => {
@@ -293,8 +319,8 @@ export function Containers() {
                       ...prev,
                       [containerId]: taskID
                     }))
-                    // 调用轮询进度函数
-                    pollProgress(containerId, taskID)
+                    // 串行等待上一项完成，避免与节点操作锁冲突。
+                    await pollProgress(containerId, taskID)
                   }
                 }
               }
@@ -315,6 +341,7 @@ export function Containers() {
       }
 
       // 如果不是更新操作，延迟刷新以获取最新数据
+      await queryClient.invalidateQueries({ queryKey: [deviceId, 'composeProjects'] })
       if (action !== 'update') {
         setTimeout(() => {
           refetch()
@@ -368,6 +395,8 @@ export function Containers() {
         return
       }
 
+      if (container.composeProject && !existingTaskID) { onOpenCompose?.(container); return }
+
       console.log(`开始更新容器 "${container.name}"，使用镜像: ${container.usingImage}`)
 
       setContainerActions(prev => ({
@@ -381,7 +410,7 @@ export function Containers() {
           ...prev,
           [containerId]: existingTaskID
         }))
-        pollProgress(containerId, existingTaskID)
+        await pollProgress(containerId, existingTaskID)
         return
       }
 
@@ -406,7 +435,7 @@ export function Containers() {
             [containerId]: taskID
           }))
 
-          pollProgress(containerId, taskID)
+          await pollProgress(containerId, taskID)
         } else {
           // 如果没有返回taskID,说明更新可能立即完成
           setContainerActions(prev => {
@@ -456,134 +485,28 @@ export function Containers() {
     }
   }
 
-  // 轮询进度
+  // 任务及轮询固定在提交设备；只有明确的最终状态才能表示成功。
   const pollProgress = async (containerId, taskID) => {
-    const maxAttempts = 60 // 最多轮询60次 (2分钟)
-    let attempts = 0
-    let pollTimer = null
-
-    const clearPollState = () => {
-      if (pollTimer) {
-        clearTimeout(pollTimer)
-        pollTimer = null
-      }
-      setContainerActions(prev => {
-        const newState = { ...prev }
-        delete newState[containerId]
-        return newState
-      })
-      setUpdateTasks(prev => {
-        const newState = { ...prev }
-        delete newState[containerId]
-        return newState
-      })
-    }
-
-    const poll = async () => {
-      try {
-        attempts++
-        const response = await progressAPI.getProgress(taskID)
-        console.log(`进度查询[${attempts}/${maxAttempts}]:`, response.data)
-
-        const data = response.data
-
-        // 提取进度信息
-        let progressMsg = '处理中...'
-        let percentage = 0
-
-        if (data.data?.progress) {
-          progressMsg = data.data.progress
-        } else if (data.data?.message) {
-          progressMsg = data.data.message
-        } else if (data.msg) {
-          progressMsg = data.msg
-        }
-
-        // 提取百分比
-        if (data.data?.percentage !== undefined) {
-          percentage = Math.min(100, Math.max(0, parseFloat(data.data.percentage)))
-        } else if (data.data?.percent !== undefined) {
-          percentage = Math.min(100, Math.max(0, parseFloat(data.data.percent)))
-        } else {
-          // 尝试从进度消息中提取百分比
-          const percentMatch = progressMsg.match(/(\d+(?:\.\d+)?)\s*%/)
-          if (percentMatch) {
-            percentage = Math.min(100, Math.max(0, parseFloat(percentMatch[1])))
-          } else {
-            // 根据轮询次数估算进度
-            percentage = Math.min(95, (attempts / maxAttempts) * 100)
-          }
-        }
-
-        // 检查是否完成 - 兼容多种响应格式
-        const status = data.data?.status || data.status
-        const isDone = data.data?.isDone === true ||
-          status === 'completed' ||
-          status === 'success' ||
-          status === 'done' ||
-          status === 'finish' ||
-          status === 'finished'
-
-        // 检查是否失败
-        const isFailed = status === 'failed' ||
-          status === 'error' ||
-          progressMsg.includes('失败') ||
-          progressMsg.includes('错误') ||
-          data.code === 500 ||
-          data.code === 400
-
-        const isCompleted = isDone && !isFailed
-
-        if (isCompleted) {
-          // 任务完成 - 立即停止轮询
-          console.log('容器更新完成，停止轮询')
-          clearPollState()
+    try {
+      for (let attempt = 0; attempt < 900; attempt++) {
+        const task = (await progressAPI.getProgress(taskID)).data.data
+        if (task.isDone) {
           await refetch()
-          console.log('✅ 容器更新完成!')
-          return // 确保不再继续执行
+          await queryClient.invalidateQueries({ queryKey: [deviceId, 'composeProjects'] })
+          if (task.status !== 'succeeded') throw new Error(task.message || '更新失败，请查看当前设备任务详情')
+          return
         }
-
-        if (isFailed) {
-          // 任务失败 - 立即停止轮询
-          console.log('容器更新失败，停止轮询')
-          clearPollState()
-          // 添加更详细的错误信息
-          const errorMsg = data.data?.error || data.data?.message || data.msg || '更新失败'
-          console.error(`❌ 更新失败: ${errorMsg}`)
-
-          return // 确保不再继续执行
-        }
-
-        // 更新容器操作状态，显示进度
-        setContainerActions(prev => ({
-          ...prev,
-          [containerId]: {
-            action: 'update',
-            loading: true,
-            progress: progressMsg,
-            percentage: percentage
-          }
-        }))
-
-        // 继续轮询
-        if (attempts < maxAttempts) {
-          pollTimer = setTimeout(poll, 2000) // 2秒后再次查询
-        } else {
-          clearPollState()
-          console.error('⏱️ 更新超时，请检查容器状态')
-
-        }
-      } catch (error) {
-        console.error('查询进度失败:', error)
-        clearPollState()
-        console.error(`❌ 更新失败: ${error.response?.data?.msg || error.message}`)
-        // 显示网络错误或其他异常情况的友好提示
-
+        setContainerActions(prev => ({ ...prev, [containerId]: {
+          action: 'update', loading: true,
+          progress: task.message || '处理中…', percentage: task.percentage || 0
+        } }))
+        await new Promise(resolve => setTimeout(resolve, 2000))
       }
+      throw new Error('等待结果超时，请在原设备任务列表确认，避免重复提交。')
+    } finally {
+      setContainerActions(prev => { const next = { ...prev }; delete next[containerId]; return next })
+      setUpdateTasks(prev => { const next = { ...prev }; delete next[containerId]; return next })
     }
-
-    // 开始轮询
-    poll()
   }
 
   // 容器选择处理函数
@@ -597,10 +520,10 @@ export function Containers() {
 
   // 全选/取消全选
   const toggleSelectAll = () => {
-    if (selectedContainers.length === containers.length) {
+    if (selectedContainers.length === visibleContainers.length) {
       setSelectedContainers([])
     } else {
-      setSelectedContainers(containers.map(container => container.id))
+      setSelectedContainers(visibleContainers.map(container => container.id))
     }
   }
 
@@ -714,9 +637,6 @@ export function Containers() {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 space-y-4 sm:space-y-0 pt-4 sm:pt-0">
         <div>
           <h2 className="text-2xl font-bold text-gray-900 dark:text-white">容器管理</h2>
-          <p className="text-gray-600 dark:text-gray-400 mt-1">
-            管理您的Docker容器，包括启动、停止、重启等操作
-          </p>
         </div>
 
         {/* 批量操作按钮区域 */}
@@ -742,13 +662,13 @@ export function Containers() {
             <button
               className="btn-secondary px-3 sm:px-4 py-2"
               onClick={toggleSelectAll}
-              title={selectedContainers.length === containers.length ? '取消全选' : '全选'}
+              title={selectedContainers.length === visibleContainers.length ? '取消全选' : '全选'}
             >
               <span className="hidden sm:inline">
-                {selectedContainers.length === containers.length ? '取消全选' : '全选'}
+                {selectedContainers.length === visibleContainers.length ? '取消全选' : '全选'}
               </span>
               <span className="sm:hidden text-sm font-semibold">
-                {selectedContainers.length}/{containers.length}
+                {selectedContainers.length}/{visibleContainers.length}
               </span>
             </button>
             <button
@@ -815,7 +735,7 @@ export function Containers() {
             <div className="absolute inset-0 bg-gradient-to-br from-primary-500/5 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
             <div className="relative">
               <div className="text-2xl sm:text-3xl font-bold text-primary-600 dark:text-primary-400 transition-transform duration-300 group-hover:scale-110">
-                {containers.length}
+                {projectContainers.length}
               </div>
               <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mt-1">总容器</div>
             </div>
@@ -832,7 +752,7 @@ export function Containers() {
             <div className="absolute inset-0 bg-gradient-to-br from-green-500/5 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
             <div className="relative">
               <div className="text-2xl sm:text-3xl font-bold text-green-600 dark:text-green-400 transition-transform duration-300 group-hover:scale-110">
-                {containers.filter(c => c.status === 'running').length}
+                {projectContainers.filter(c => c.status === 'running').length}
               </div>
               <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mt-1">运行中</div>
             </div>
@@ -849,7 +769,7 @@ export function Containers() {
             <div className="absolute inset-0 bg-gradient-to-br from-red-500/5 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
             <div className="relative">
               <div className="text-2xl sm:text-3xl font-bold text-red-600 dark:text-red-400 transition-transform duration-300 group-hover:scale-110">
-                {containers.filter(c => c.status && c.status.toLowerCase() !== 'running').length}
+                {projectContainers.filter(c => c.status && c.status.toLowerCase() !== 'running').length}
               </div>
               <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mt-1">已停止</div>
             </div>
@@ -866,7 +786,7 @@ export function Containers() {
             <div className="absolute inset-0 bg-gradient-to-br from-yellow-500/5 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
             <div className="relative">
               <div className="text-2xl sm:text-3xl font-bold text-yellow-600 dark:text-yellow-400 transition-transform duration-300 group-hover:scale-110">
-                {containers.filter(c => c.haveUpdate).length}
+                {projectContainers.filter(c => c.haveUpdate).length}
               </div>
               <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mt-1">有更新</div>
             </div>
@@ -876,14 +796,16 @@ export function Containers() {
 
       {/* 容器列表 */}
       <div className="px-2 sm:px-6 py-4">
-        {(filterStatus || selectedContainers.length > 0) && (
+        {(scope || filterStatus || selectedContainers.length > 0) && (
           <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2 min-w-0">
+                {scope && <button type="button" onClick={() => onOpenCompose?.({ composeProject: scope.projectName, composeDirectory: scope.directory, composeService: scope.serviceName })} className="inline-flex items-center gap-1.5 min-w-0 max-w-full text-sm font-medium text-primary-700 dark:text-primary-300 hover:underline" title="打开项目">
+                  <Boxes className="h-4 w-4 flex-shrink-0" /><span className="truncate">{scope.projectName}{scope.serviceName && ` / ${scope.serviceName}`}</span>
+                </button>}
                 <span className="text-sm text-blue-700 dark:text-blue-300">
                   {filterStatus && (
                     <>
-                      筛选中：
                       {filterStatus === 'running' && '运行中容器 '}
                       {filterStatus === 'stopped' && '已停止容器 '}
                       {filterStatus === 'update' && '有更新容器 '}
@@ -891,7 +813,7 @@ export function Containers() {
                   )}
                   {!filterStatus && selectedContainers.length > 0 && (
                     <>
-                      已选中 {selectedContainers.length} 个容器（使用 Ctrl/Cmd+点击 来切换选择，或直接点击卡片打开详情）
+                      已选 {selectedContainers.length} 个
                     </>
                   )}
                   {filterStatus && selectedContainers.length > 0 && (
@@ -900,11 +822,12 @@ export function Containers() {
                     </>
                   )}
                 </span>
-                {filterStatus && (
+                {(scope || filterStatus) && (
                   <>
                     <button
                       onClick={() => {
                         setFilterStatus(null)
+                        onClearScope?.()
                         setSelectedContainers([])
                         setIsBatchMode(false)
                       }}
@@ -914,14 +837,7 @@ export function Containers() {
                     </button>
                     <button
                       onClick={() => {
-                        const filteredContainers = containers.filter((container) => {
-                          if (!filterStatus) return true
-                          if (filterStatus === 'running') return container.status && container.status.toLowerCase() === 'running'
-                          if (filterStatus === 'stopped') return container.status && container.status.toLowerCase() !== 'running'
-                          if (filterStatus === 'update') return container.haveUpdate
-                          return true
-                        })
-                        setSelectedContainers(filteredContainers.map(c => c.id))
+                        setSelectedContainers(visibleContainers.map(c => c.id))
                         setIsBatchMode(true)
                       }}
                       className="px-2 py-0.5 text-xs font-medium text-blue-600 dark:text-blue-300 hover:text-blue-800 dark:hover:text-blue-100 bg-blue-100 dark:bg-blue-800/50 rounded transition-colors"
@@ -943,16 +859,9 @@ export function Containers() {
           </div>
         )}
 
-        {containers.length > 0 ? (
+        {visibleContainers.length > 0 ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {containers
-              .filter((container) => {
-                if (!filterStatus) return true
-                if (filterStatus === 'running') return container.status && container.status.toLowerCase() === 'running'
-                if (filterStatus === 'stopped') return container.status && container.status.toLowerCase() !== 'running'
-                if (filterStatus === 'update') return container.haveUpdate
-                return true
-              })
+            {visibleContainers
               .map((container) => {
                 const isSelected = selectedContainers.includes(container.id)
                 return (
@@ -1019,7 +928,7 @@ export function Containers() {
                                 iconUrl = builtInLogo;
                               } else {
                                 // 如果没有内置logo，则尝试从用户自定义中查找
-                                // const imageLogos = JSON.parse(localStorage.getItem('docker_copilot_image_logos') || '{}');
+                                // const imageLogos = JSON.parse(localStorage.getItem(`docker_copilot_image_logos:${deviceId}`) || '{}');
                                 // 使用 React Query 获取的数据
                                 const imageLogos = customIcons;
 
@@ -1035,7 +944,7 @@ export function Containers() {
 
                             if (iconUrl) {
                               return (
-                                <img
+                                <DeviceImage
                                   src={iconUrl}
                                   alt={container.name}
                                   className="h-12 w-12 rounded-xl object-cover shadow-sm flex-shrink-0"
@@ -1081,6 +990,8 @@ export function Containers() {
                               <p className="text-xs text-gray-500 dark:text-gray-400 truncate mt-0.5">
                                 {container.usingImage}
                               </p>
+                              {container.updateError && <p className="text-xs text-amber-600 mt-1 truncate" title={container.updateError}>无法确认更新：{container.updateError}</p>}
+                              {!container.updateChecked && !container.updateError && <p className="text-xs text-gray-400 mt-1">尚未检测更新</p>}
                             </div>
                           </div>
 
@@ -1103,6 +1014,10 @@ export function Containers() {
                           </div>
                         </div>
                       </div>
+
+                      {container.composeProject && <button type="button" onClick={event => { event.stopPropagation(); onOpenCompose?.(container) }} title={`打开项目 ${container.composeProject}`} aria-label={`打开 ${container.name} 所属项目`} className="inline-flex items-center gap-1.5 max-w-full mt-2 px-2 py-1 rounded-lg text-xs text-primary-700 dark:text-primary-300 bg-primary-50 dark:bg-primary-900/20 hover:bg-primary-100 dark:hover:bg-primary-900/40 transition-colors">
+                        <Boxes className="h-3.5 w-3.5 flex-shrink-0" /><span className="truncate">{container.composeProject}{container.composeService && ` / ${container.composeService}`}</span>
+                      </button>}
 
                       {/* 操作按钮栏 - 底部水平排列 */}
                       {!isBatchMode && (
@@ -1160,7 +1075,7 @@ export function Containers() {
                                 title="更新"
                               >
                                 <Upload className="h-4 w-4" />
-                                <span>更新</span>
+                                <span>{container.composeProject ? '项目' : '更新'}</span>
                               </button>
                             </>
                           )}
@@ -1174,10 +1089,7 @@ export function Containers() {
         ) : (
           <div className="text-center py-12">
             <Package className="mx-auto h-12 w-12 text-gray-400" />
-            <h3 className="mt-2 text-sm font-medium text-gray-900 dark:text-white">暂无容器</h3>
-            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-              当前没有运行中的Docker容器
-            </p>
+            <h3 className="mt-2 text-sm font-medium text-gray-900 dark:text-white">{scope || filterStatus ? '没有匹配的容器' : '暂无容器'}</h3>
           </div>
         )}
       </div>
@@ -1191,6 +1103,7 @@ export function Containers() {
             onRename={handleRenameContainer}
             onUpdate={handleUpdateContainer}
             onAction={handleContainerAction}
+            onOpenCompose={() => onOpenCompose?.(selectedContainer)}
           />
         )
       }
@@ -1199,7 +1112,8 @@ export function Containers() {
 }
 
 // 容器详情弹窗组件
-function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction }) {
+function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction, onOpenCompose }) {
+  const { deviceId, containerAPI, imageAPI } = useDeviceAPI()
   const queryClient = useQueryClient()
   const [name, setName] = useState(container.name)
   const [imageNameAndTag, setImageNameAndTag] = useState(container.usingImage)
@@ -1213,7 +1127,7 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
 
   // 获取自定义图标配置
   const { data: customIcons = {} } = useQuery({
-    queryKey: ['customIcons'],
+    queryKey: [deviceId, 'customIcons'],
     queryFn: async () => {
       const response = await imageAPI.getIcons()
       if (response.data.code === 200 || response.data.code === 0) {
@@ -1221,7 +1135,7 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
       }
       return {}
     },
-    initialData: () => JSON.parse(localStorage.getItem('docker_copilot_image_logos') || '{}'),
+    initialData: () => JSON.parse(localStorage.getItem(`docker_copilot_image_logos:${deviceId}`) || '{}'),
   })
 
   // 当容器切换时，更新表单字段的值
@@ -1241,7 +1155,7 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
           const updatedContainer = containers.find(c => c.id === container.id);
           if (updatedContainer) {
             // 检查是否有镜像图标
-            const imageLogos = JSON.parse(localStorage.getItem('docker_copilot_image_logos') || '{}');
+            const imageLogos = JSON.parse(localStorage.getItem(`docker_copilot_image_logos:${deviceId}`) || '{}');
 
             // 如果容器没有自定义图标，则查找镜像图标
             if (!updatedContainer.iconUrl) {
@@ -1309,11 +1223,11 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
         const filename = response.data.data // 后端返回的文件名
         if (filename) {
           const newPath = `/src/config/image/${filename}`
-          const imageLogos = JSON.parse(localStorage.getItem('docker_copilot_image_logos') || '{}')
+          const imageLogos = JSON.parse(localStorage.getItem(`docker_copilot_image_logos:${deviceId}`) || '{}')
 
           // 更新映射: 镜像名 -> 新路径
           imageLogos[targetImageName] = newPath
-          localStorage.setItem('docker_copilot_image_logos', JSON.stringify(imageLogos))
+          localStorage.setItem(`docker_copilot_image_logos:${deviceId}`, JSON.stringify(imageLogos))
 
           // 强制更新当前容器视图
           setCurrentContainer(prev => ({
@@ -1325,8 +1239,8 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
           window.dispatchEvent(new Event('storage'))
 
           // 无效化查询以刷新列表和图标
-          await queryClient.invalidateQueries(['containers'])
-          await queryClient.invalidateQueries(['customIcons'])
+          await queryClient.invalidateQueries({ queryKey: [deviceId, 'containers'] })
+          await queryClient.invalidateQueries({ queryKey: [deviceId, 'customIcons'] })
 
           console.log('✅ 图标上传成功并已应用')
         }
@@ -1364,7 +1278,7 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
       }
 
       // 无效化查询以触发重新获取数据
-      await queryClient.invalidateQueries(['containers'])
+      await queryClient.invalidateQueries({ queryKey: [deviceId, 'containers'] })
 
       setIsActionProcessing(false);
       setCurrentAction('');
@@ -1384,7 +1298,7 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
         await onRename(container.id, name)
 
         // 无效化查询以触发重新获取数据
-        await queryClient.invalidateQueries(['containers'])
+        await queryClient.invalidateQueries({ queryKey: [deviceId, 'containers'] })
 
         // 更新当前容器状态
         setCurrentContainer({ ...currentContainer, name: name })
@@ -1402,6 +1316,7 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
 
   const handleSave = async () => {
     // 如果镜像tag发生变化，则更新容器
+    if (currentContainer.composeProject) { onOpenCompose?.(); return }
     if (imageNameAndTag !== currentContainer.usingImage) {
       try {
         setIsUpdating(true)
@@ -1436,7 +1351,7 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
             console.log('✅ 容器更新任务已启动，请在列表中查看进度')
           } else {
             // 没有taskID，更新完成
-            await queryClient.invalidateQueries(['containers'])
+            await queryClient.invalidateQueries({ queryKey: [deviceId, 'containers'] })
             setImageNameAndTag(imageNameAndTag) // 更新本地状态
             console.log('✅ 容器镜像更新完成')
           }
@@ -1452,7 +1367,7 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
           console.error(`更新操作已提交，但连接超时。请稍后手动刷新页面查看操作结果`)
           // 即使超时也关闭弹窗并触发轮询，因为操作可能仍在进行中
           onClose()
-          onUpdate(container.id)
+          alert('更新请求超时，结果尚未确定，请到当前设备任务列表查看；不会自动重试。')
         }
         setIsUpdating(false)
       }
@@ -1487,7 +1402,7 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
         iconUrl = builtInLogo;
       } else {
         // 如果没有内置logo，则尝试从用户自定义中查找
-        // const imageLogos = JSON.parse(localStorage.getItem('docker_copilot_image_logos') || '{}');
+        // const imageLogos = JSON.parse(localStorage.getItem(`docker_copilot_image_logos:${deviceId}`) || '{}');
         const imageLogos = customIcons;
         const imageFullName = currentContainer.usingImage;
 
@@ -1509,7 +1424,7 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
     const IconContent = () => {
       if (iconUrl) {
         return (
-          <img
+          <DeviceImage
             src={iconUrl}
             alt={currentContainer.name}
             className="h-12 w-12 rounded-xl object-cover"
@@ -1598,6 +1513,9 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
 
         {/* 弹窗内容 */}
         <div className="px-6 py-4 space-y-4">
+          {currentContainer.composeProject && <button type="button" onClick={onOpenCompose} className="inline-flex items-center gap-2 max-w-full text-sm text-primary-600 dark:text-primary-400 hover:underline" title="编辑项目">
+            <Boxes className="h-4 w-4 flex-shrink-0" /><span className="truncate">{currentContainer.composeProject}{currentContainer.composeService && ` / ${currentContainer.composeService}`}</span>
+          </button>}
           {/* 容器名称 */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -1642,11 +1560,12 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
                 className="input flex-1"
                 placeholder="例如: nginx:latest"
                 disabled={isActionProcessing || isUpdating}
+                readOnly={!!currentContainer.composeProject}
               />
               <button
                 onClick={handleSave}
-                disabled={isUpdating || (imageNameAndTag === currentContainer.usingImage) || !imageNameAndTag.trim()}
-                className={`px-3 py-2 text-sm rounded-lg transition-colors flex items-center ${isUpdating || (imageNameAndTag === currentContainer.usingImage) || !imageNameAndTag.trim()
+                disabled={isUpdating || (!currentContainer.composeProject && ((imageNameAndTag === currentContainer.usingImage) || !imageNameAndTag.trim()))}
+                className={`px-3 py-2 text-sm rounded-lg transition-colors flex items-center ${isUpdating || (!currentContainer.composeProject && ((imageNameAndTag === currentContainer.usingImage) || !imageNameAndTag.trim()))
                   ? 'bg-gray-200 text-gray-500 cursor-not-allowed dark:bg-gray-700 dark:text-gray-400'
                   : 'bg-primary-600 text-white hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600'
                   }`}
@@ -1657,13 +1576,13 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
                     更新中
                   </>
                 ) : (
-                  '更换镜像'
+                  currentContainer.composeProject ? '编辑项目' : '更换镜像'
                 )}
               </button>
             </div>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            {!currentContainer.composeProject && <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
               修改镜像后点击"更换镜像"按钮将重新创建容器
-            </p>
+            </p>}
           </div>
         </div>
 
@@ -1689,7 +1608,7 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
                 ) : (
                   <>
                     <Upload className="h-4 w-4 flex-shrink-0" />
-                    <span>更新</span>
+                    <span>{container.composeProject ? '项目' : '更新'}</span>
                   </>
                 )}
               </button>

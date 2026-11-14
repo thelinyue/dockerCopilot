@@ -1,4 +1,4 @@
-const CACHE_NAME = 'docker-copilot-v1';
+const CACHE_NAME = 'docker-copilot-v2';
 const urlsToCache = [
   '/',
   '/index.html',
@@ -26,52 +26,45 @@ self.addEventListener('activate', event => {
     caches.keys().then(cacheNames => {
       return Promise.all(
         cacheNames.map(cacheName => {
-          if (cacheName !== CACHE_NAME) {
+          if (cacheName.startsWith('docker-copilot-') && cacheName !== CACHE_NAME) {
             return caches.delete(cacheName);
           }
         })
       );
-    })
+    }).then(() => self.clients.claim())
   );
-  self.clients.claim();
 });
 
 // 获取事件
 self.addEventListener('fetch', event => {
-  // 只缓存 GET 请求
-  if (event.request.method !== 'GET') {
+  const url = new URL(event.request.url);
+  const navigation = event.request.mode === 'navigate';
+  const staticAsset = url.pathname.startsWith('/assets/') || url.pathname.startsWith('/manager/assets/') || urlsToCache.includes(url.pathname);
+  // 业务接口包含认证和设备信息，必须访问网络；缓存键不会按设备选择头自动隔离。
+  if (event.request.method !== 'GET' || url.origin !== self.location.origin || url.pathname.startsWith('/api/') || (!navigation && !staticAsset)) {
     return;
   }
 
-  event.respondWith(
-    caches.match(event.request)
-      .then(response => {
-        // 如果缓存中有，返回缓存
-        if (response) {
-          return response;
-        }
-
-        return fetch(event.request).then(response => {
-          // 检查是否有效的响应
-          if (!response || response.status !== 200 || response.type !== 'basic') {
-            return response;
-          }
-
-          // 克隆响应
-          const responseToCache = response.clone();
-
-          // 缓存新的响应（仅缓存成功的响应）
-          caches.open(CACHE_NAME)
-            .then(cache => {
-              cache.put(event.request, responseToCache);
-            });
-
-          return response;
-        });
-      })
-      .catch(() => {
-        // 离线时的备选方案
-        return caches.match('/index.html');
-      })
-  );
+  event.respondWith((async () => {
+    const cache = await caches.open(CACHE_NAME);
+    // 页面优先读取网络，避免应用更新后持续加载旧入口；离线时仍可显示已有页面。
+    if (navigation) {
+      try {
+        const response = await fetch(event.request);
+        if (response.ok) await cache.put('/index.html', response.clone());
+        return response;
+      } catch (error) {
+        const response = await cache.match('/index.html');
+        if (response) return response;
+        throw error;
+      }
+    }
+    const cached = await cache.match(event.request);
+    if (cached) return cached;
+    const response = await fetch(event.request);
+    if (response.status === 200 && response.type === 'basic') {
+      await cache.put(event.request, response.clone());
+    }
+    return response;
+  })());
 });

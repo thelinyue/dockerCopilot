@@ -3,8 +3,11 @@
 !.local/
 !.local/bin/
 !.local/bin/dockerCopilot
+!.local/bin/docker
+!.local/bin/docker-compose
 !.local/ca-certificates.crt
 !etc/
 !etc/dockerCopilot.yaml
 !dev/
 !dev/Dockerfile
+!start.sh

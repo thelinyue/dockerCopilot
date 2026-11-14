@@ -3,14 +3,17 @@ import { Auth } from './components/Auth.jsx'
 import { Sidebar, MobileBottomNav } from './components/Header.jsx'
 import { Containers } from './components/Containers.jsx'
 import { Images } from './components/Images.jsx'
-import { Backups } from './components/Backups.jsx'
 import { Icons } from './components/Icons.jsx'
 import { About } from './components/About.jsx'
 import { ThemeProvider } from './hooks/useTheme.jsx'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cn } from './utils/cn.js'
 
-import { containerAPI, imageAPI } from './api/client.js'
+import { DeviceProvider } from './hooks/useDevice.jsx'
+import { Devices } from './components/Devices.jsx'
+import { Automation } from './components/Automation.jsx'
+import { Compose } from './components/Compose.jsx'
+import { ConfirmationProvider, useConfirmation } from './components/ManagementUI.jsx'
 
 // 创建一个全局的QueryClient实例
 const queryClient = new QueryClient({
@@ -23,8 +26,13 @@ const queryClient = new QueryClient({
 })
 
 function AppContent() {
+  const confirm = useConfirmation()
   const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [deviceId, setDeviceId] = useState(() => localStorage.getItem('docker_copilot_device') || 'local')
+  const [dirty, setDirty] = useState(false)
   const [activeTab, setActiveTab] = useState('#containers')
+  const [containerScope, setContainerScope] = useState(null)
+  const [composeTarget, setComposeTarget] = useState(null)
   const [windowWidth, setWindowWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1024)
   const [userPreferredCollapsed, setUserPreferredCollapsed] = useState(false)
 
@@ -50,21 +58,6 @@ function AppContent() {
     if (token) {
       setIsAuthenticated(true)
     }
-
-    // 同步图标配置
-    const syncIcons = async () => {
-      try {
-        const response = await imageAPI.getIcons()
-        if (response.data.code === 200 || response.data.code === 0) {
-          const icons = response.data.data
-          // 简单的全量更新，以后如果支持前端删除，可能需要合并逻辑
-          localStorage.setItem('docker_copilot_image_logos', JSON.stringify(icons))
-        }
-      } catch (error) {
-        console.error('Failed to sync icons:', error)
-      }
-    }
-    syncIcons()
 
     // 监听storage事件，当其他标签页修改localStorage时更新认证状态
     const handleStorageChange = (e) => {
@@ -111,15 +104,46 @@ function AppContent() {
     window.dispatchEvent(new CustomEvent('authChange', { detail: { authenticated: true } }))
   }
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    if (dirty && !await confirm({ title: '退出登录', message: '项目文件有未保存的修改，退出后将丢失。', confirmText: '退出登录' })) return
+    setDirty(false)
+    setContainerScope(null)
+    setComposeTarget(null)
     localStorage.removeItem('docker_copilot_token')
     setIsAuthenticated(false)
     // 触发自定义事件通知其他组件认证状态已更新
     window.dispatchEvent(new CustomEvent('authChange', { detail: { authenticated: false } }))
   }
 
-  const handleTabChange = (tab) => {
+  const handleTabChange = async (tab) => {
+    if (tab === activeTab) {
+      if (tab === '#containers') setContainerScope(null)
+      return true
+    }
+    if (dirty && !await confirm({ title: '离开当前页面', message: '项目文件有未保存的修改，离开后将丢失。', confirmText: '放弃修改' })) return false
+    setDirty(false)
+    setContainerScope(null)
+    setComposeTarget(null)
     setActiveTab(tab)
+    return true
+  }
+
+  // 联动只携带当前设备的项目位置，不用项目名猜测其他设备上的对象。
+  const openCompose = async (container) => {
+    if (await handleTabChange('#compose')) setComposeTarget(container || null)
+  }
+  const openContainers = async (scope) => {
+    if (await handleTabChange('#containers')) setContainerScope(scope)
+  }
+
+  const handleDeviceChange = async (id) => {
+    if (id === deviceId) return
+    if (dirty && !await confirm({ title: '切换设备', message: '项目文件有未保存的修改，切换后将丢失。', confirmText: '放弃并切换' })) return
+    setDirty(false)
+    setContainerScope(null)
+    setComposeTarget(null)
+    setDeviceId(id)
+    localStorage.setItem('docker_copilot_device', id)
   }
 
   const handleToggleCollapse = () => {
@@ -132,17 +156,21 @@ function AppContent() {
   const renderContent = () => {
     switch (activeTab) {
       case '#containers':
-        return <Containers />
+        return <Containers scope={containerScope} onClearScope={() => setContainerScope(null)} onOpenCompose={openCompose} />
       case '#images':
         return <Images />
       case '#icons':
         return <Icons />
-      case '#backups':
-        return <Backups />
+      case '#compose':
+        return <Compose onDirty={setDirty} initialTarget={composeTarget} onOpenContainers={openContainers} />
+      case '#automation':
+        return <Automation />
+      case '#devices':
+        return <Devices />
       case '#about':
         return <About />
       default:
-        return <Containers />
+        return <Containers scope={containerScope} onClearScope={() => setContainerScope(null)} onOpenCompose={openCompose} />
     }
   }
 
@@ -151,6 +179,7 @@ function AppContent() {
   }
 
   return (
+    <DeviceProvider key={deviceId} deviceId={deviceId}>
     <div className="flex min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors duration-300 flex-col lg:flex-row">
       <Sidebar
         activeTab={activeTab}
@@ -159,9 +188,11 @@ function AppContent() {
         isCollapsed={isSidebarCollapsed}
         onToggleCollapse={handleToggleCollapse}
         windowWidth={windowWidth}
+        deviceId={deviceId}
+        onDeviceChange={handleDeviceChange}
       />
       <main className={cn(
-        "flex-1 flex flex-col transition-all duration-300",
+        "flex-1 min-w-0 flex flex-col transition-all duration-300",
         "overflow-y-auto",
         "min-h-screen",
         windowWidth < 768
@@ -182,6 +213,7 @@ function AppContent() {
         windowWidth={windowWidth}
       />
     </div>
+    </DeviceProvider>
   )
 }
 
@@ -189,7 +221,9 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <AppContent />
+        <ConfirmationProvider>
+          <AppContent />
+        </ConfirmationProvider>
       </ThemeProvider>
     </QueryClientProvider>
   )

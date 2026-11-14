@@ -51,12 +51,24 @@ function Build-Dev {
     finally { Pop-Location }
     # 保留目录，不递归删除用户文件；Go embed 已由前端构建提供完整页面。
     New-Item -ItemType Directory -Force -Path 'front', '.local/bin' | Out-Null
+    # 复用 WSL 已安装的官方工具，开发镜像构建无需重新拉取 CLI 软件包。
+    Copy-Item -LiteralPath '\\wsl.localhost\Debian\usr\bin\docker' -Destination '.local/bin/docker' -Force
+    $pluginPath = (& wsl.exe -d Debian --exec docker info --format '{{range .ClientInfo.Plugins}}{{if eq .Name "compose"}}{{.Path}}{{end}}{{end}}').Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $pluginPath) { throw 'WSL 缺少官方 Compose 插件，请先安装 docker-compose-plugin。' }
+    Copy-Item -LiteralPath ('\\wsl.localhost\Debian' + $pluginPath.Replace('/', '\')) -Destination '.local/bin/docker-compose' -Force
+    $wslMachine = (& wsl.exe -d Debian --exec uname -m).Trim()
+    if ($LASTEXITCODE -ne 0) { throw '无法确认 WSL 架构。' }
+    $devArchitecture = switch ($wslMachine) {
+        'x86_64' { 'amd64' }
+        'aarch64' { 'arm64' }
+        default { throw "开发镜像暂不支持 WSL 架构：$wslMachine" }
+    }
     $previousGoos = $env:GOOS
     $previousGoarch = $env:GOARCH
     $previousCgo = $env:CGO_ENABLED
     try {
         $env:GOOS = 'linux'
-        $env:GOARCH = 'amd64'
+        $env:GOARCH = $devArchitecture
         $env:CGO_ENABLED = '0'
         $version = (Get-Content -LiteralPath version -Raw).Trim() + '-dev'
         Invoke-Checked go @('build', '-trimpath', '-ldflags',

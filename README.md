@@ -5,7 +5,7 @@
 
 # 介绍
 
-一个主打便捷的docker容器管理工具，现在已经支持所有平台。
+一个面向自托管设备的 Docker 容器管理工具，前后端在本仓库统一开发。
 已经实现：
 1. 一键更新容器
 2. 指定镜像和tag更新
@@ -14,14 +14,17 @@
 5. 删除无TAG镜像
 6. 删除未使用镜像
 7. 更新进度查看
-8. 备份容器设置
-9. 恢复容器设置
+8. 定时检测镜像更新、全局自动更新与排除规则
+9. 通过界面设置镜像检测的 HTTP_PROXY、HTTPS_PROXY
+10. 项目接管、原文编辑、自动检查、部署及失败恢复
+11. 项目、服务与所属容器双向跳转
+12. 多设备切换，统一管理远端容器、镜像、图标、项目与定时计划
 
 ## 使用
 
 docker compose 安装
 
-```
+```yaml
 services:
   dockercopilot:
     container_name: dockercopilot
@@ -33,12 +36,20 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./data:/data
+      - /srv/compose:/srv/compose:rw
     environment:
       - TZ=Asia/Shanghai
       - DOCKER_HOST=unix:///var/run/docker.sock
       - secretKey=密码，不少于八位且非纯数字
-    image: 0nlylty/dockercopilot:latest
+      - COMPOSE_ROOT=/srv/compose
+    image: ${DOCKERCOPILOT_IMAGE:?请设置本仓库构建的镜像地址和版本}
 ```
+
+先设置 `DOCKERCOPILOT_IMAGE` 为本仓库构建的镜像；上游旧镜像不包含本次新增能力。新增功能需要重新构建或升级完整容器镜像，以安装官方 Docker CLI 和 Compose 插件。
+
+`/srv/compose` 可替换为你的项目目录，宿主机与容器内使用相同绝对路径并以读写方式挂载。每台受管设备分别挂载自己的目录。修改挂载后需要重新创建该设备的 DockerCopilot 容器。
+
+自动更新默认关闭，检测默认在启动时及每小时第 30 分钟执行。使用、目录挂载、代理边界、恢复行为及多设备接入详见 [管理功能说明](docs/MANAGEMENT.md)。
 
 ## 开发环境
 

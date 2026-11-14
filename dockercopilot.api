@@ -58,14 +58,6 @@ type IdReq {
 	Id string `path:"id"`
 }
 
-type ContainerRestoreReq {
-	Filename string `json:"filename"`
-}
-
-type DelContainerBackupReq {
-	Filename string `form:"filename"`
-}
-
 type ContainerRenameReq {
 	IdReq
 	NewName string `form:"newName"`
@@ -80,6 +72,7 @@ type ContainerUpdateReq {
 	IdReq
 	ImageNameAndTag string `form:"imageNameAndTag"`
 	ContainerName   string `form:"containerName"`
+	DelOldContainer string `form:"delOldContainer,optional"`
 }
 
 type VersionMsgResp {
@@ -139,20 +132,6 @@ service dockerCopilot {
 	@handler update
 	post /container/:id/update (ContainerUpdateReq) returns (Resp)
 
-	@handler backup
-	get /container/backup returns (Resp)
-
-	@handler backup2compose
-	get /container/backup2compose returns (Resp)
-
-	@handler listBackups
-	get /container/listBackups returns (Resp)
-
-	@handler restore
-		post /container/backups/restore (ContainerRestoreReq) returns (Resp)
-
-	@handler delRestore
-		delete /container/backups (DelContainerBackupReq) returns (Resp)
 }
 
 @server(

@@ -9,14 +9,13 @@ COPY dc-back/dist/$TARGETPLATFORM/dockerCopilot ./dockerCopilot
 COPY dc-back/etc/. ./etc
 COPY start.sh ./start.sh
 
-RUN apk add --no-cache tzdata \
+RUN apk add --no-cache tzdata ca-certificates docker-cli docker-cli-compose \
     && chmod +x start.sh \
     && chmod +x dockerCopilot
 
 # 设置环境变量
 ENV secretKey="" \
     DOCKER_HOST="unix:///var/run/docker.sock" \
-    BACKUP_DIR="/data/backups" \
     TZ="Asia/Shanghai"
 
 VOLUME ["/data"]

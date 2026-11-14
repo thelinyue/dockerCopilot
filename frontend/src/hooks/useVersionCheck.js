@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { versionAPI } from '../api/client.js'
+import { useDeviceAPI } from './useDevice.jsx'
 
 /**
  * 检查版本是否需要更新
@@ -9,6 +9,7 @@ import { versionAPI } from '../api/client.js'
  * @returns {boolean} 是否需要更新
  */
 function shouldUpdate(currentVersion, latestVersion) {
+  if (currentVersion?.endsWith('-dev')) return false
   if (currentVersion === 'unknown' || latestVersion === 'unknown') {
     return false
   }
@@ -36,7 +37,7 @@ function shouldUpdate(currentVersion, latestVersion) {
 function parseVersion(version) {
   if (!version || typeof version !== 'string') return null
   
-  const match = version.match(/^(\d+)\.(\d+)\.(\d+)(?:-.+)?$/)
+  const match = version.match(/^v?(\d+)\.(\d+)\.(\d+)(?:-.+)?$/)
   if (!match) return null
   
   return {
@@ -52,11 +53,13 @@ function parseVersion(version) {
  * 用于检查后端版本，并提示用户是否有更新
  */
 export function useVersionCheck() {
+  const { deviceId, versionAPI, progressAPI } = useDeviceAPI()
   const [showUpdatePrompt, setShowUpdatePrompt] = useState(false)
+  const [isUpdating, setIsUpdating] = useState(false)
 
   // 查询后端版本信息
   const { data: versionData, refetch } = useQuery({
-    queryKey: ['version'],
+    queryKey: [deviceId, 'version'],
     queryFn: async () => {
       try {
         // 获取本地版本信息
@@ -77,6 +80,7 @@ export function useVersionCheck() {
         
         // 获取远端版本信息
         let remoteVersion = 'unknown'
+        let versionError = ''
         
         try {
           const remoteResponse = await versionAPI.getVersion('remote')
@@ -90,6 +94,7 @@ export function useVersionCheck() {
             }
           }
         } catch (error) {
+          versionError = error.message
           console.warn('获取远端版本信息失败:', error)
         }
         
@@ -97,6 +102,7 @@ export function useVersionCheck() {
           backendVersion,
           remoteVersion,
           buildDate,
+          versionError,
           hasBackendUpdate: shouldUpdate(backendVersion, remoteVersion)
         }
       } catch (error) {
@@ -105,6 +111,7 @@ export function useVersionCheck() {
           backendVersion: 'unknown',
           remoteVersion: 'unknown',
           buildDate: '',
+          versionError: error.message,
           hasBackendUpdate: false
         }
       }
@@ -114,20 +121,34 @@ export function useVersionCheck() {
     staleTime: 30000 // 30秒内不重新请求
   })
 
-  // 更新后端
+  // 后端先返回任务，下载、校验和重启在固定设备执行。
   const updateBackend = useCallback(async () => {
+    setIsUpdating(true)
     try {
-      await versionAPI.updateProgram()
-      setShowUpdatePrompt(true)
-      // 3秒后自动刷新
+      const response = await versionAPI.updateProgram()
+      const id = response.data.data.taskID
+      let completed = false
+      for (let attempt = 0; attempt < 300; attempt++) {
+        await new Promise(resolve => setTimeout(resolve, 1000))
+        const progress = (await progressAPI.getProgress(id)).data.data
+        if (!progress.isDone) continue
+        if (progress.status !== 'succeeded') throw new Error(progress.message || '程序更新失败')
+        completed = true
+        break
+      }
+      if (!completed) throw new Error('等待更新结果超时，请在该设备的任务列表确认结果，避免重复提交。')
+      setShowUpdatePrompt(false)
       setTimeout(() => {
-        window.location.reload()
-      }, 3000)
+        if ((localStorage.getItem('docker_copilot_device') || 'local') !== deviceId) return
+        if (deviceId === 'local') window.location.reload()
+        else refetch()
+      }, 12000)
     } catch (error) {
-      console.error('后端更新失败:', error)
-      alert('后端更新失败，请手动重启应用')
+      alert(error.response?.data?.msg || error.message)
+    } finally {
+      setIsUpdating(false)
     }
-  }, [])
+  }, [deviceId, versionAPI, progressAPI, refetch])
 
   // 手动检查更新
   const checkForUpdates = useCallback(async () => {
@@ -137,11 +158,13 @@ export function useVersionCheck() {
   return {
     // 状态
     showUpdatePrompt,
+    isUpdating,
     
     // 版本数据
     backendVersion: versionData?.backendVersion,
     remoteVersion: versionData?.remoteVersion,
     buildDate: versionData?.buildDate,
+    versionError: versionData?.versionError,
     hasBackendUpdate: versionData?.hasBackendUpdate,
     
     // 方法

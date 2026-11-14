@@ -18,14 +18,19 @@ type ContainersListLogic struct {
 }
 
 type Info struct {
-	Id          string `json:"id"`
-	Status      string `json:"status"`
-	Name        string `json:"name"`
-	UsingImage  string `json:"usingImage"`
-	CreateImage string `json:"createImage"`
-	CreateTime  string `json:"createTime"`
-	RunningTime string `json:"runningTime"`
-	HaveUpdate  bool   `json:"haveUpdate"`
+	Id               string `json:"id"`
+	Status           string `json:"status"`
+	Name             string `json:"name"`
+	UsingImage       string `json:"usingImage"`
+	CreateImage      string `json:"createImage"`
+	CreateTime       string `json:"createTime"`
+	RunningTime      string `json:"runningTime"`
+	HaveUpdate       bool   `json:"haveUpdate"`
+	UpdateChecked    bool   `json:"updateChecked"`
+	UpdateError      string `json:"updateError,omitempty"`
+	ComposeProject   string `json:"composeProject,omitempty"`
+	ComposeService   string `json:"composeService,omitempty"`
+	ComposeDirectory string `json:"composeDirectory,omitempty"`
 }
 
 func NewContainersListLogic(ctx context.Context, svcCtx *svc.ServiceContext) *ContainersListLogic {
@@ -71,7 +76,16 @@ func (l *ContainersListLogic) ContainersList() (resp *types.Resp, err error) {
 			containerInfo.CreateImage = ""
 			l.Error("get image name error" + v.ID)
 		}
-		containerInfo.CreateImage = containerInspect.Config.Image
+		if containerInspect.Config != nil {
+			containerInfo.CreateImage = containerInspect.Config.Image
+		}
+		if checked, ok := l.svcCtx.HubImageInfo.Get(v.ID); ok {
+			containerInfo.UpdateChecked = true
+			containerInfo.UpdateError = checked.Error
+		}
+		containerInfo.ComposeProject = v.Labels["com.docker.compose.project"]
+		containerInfo.ComposeService = v.Labels["com.docker.compose.service"]
+		containerInfo.ComposeDirectory = v.Labels["com.docker.compose.project.working_dir"]
 		t := time.Unix(v.Created, 0)
 		containerInfo.CreateTime = t.Format("2006-01-02 15:04:05")
 		containerInfo.RunningTime = v.Status

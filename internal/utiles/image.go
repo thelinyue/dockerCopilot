@@ -3,10 +3,10 @@ package utiles
 import (
 	"context"
 	"fmt"
+	"github.com/distribution/reference"
 	"github.com/docker/docker/api/types/image"
 	"github.com/onlyLTY/dockerCopilot/internal/svc"
 	MyType "github.com/onlyLTY/dockerCopilot/internal/types"
-	"log"
 	"strings"
 )
 
@@ -14,7 +14,7 @@ func GetImagesList(ctx *svc.ServiceContext) ([]MyType.Image, error) {
 	var imagesList []MyType.Image
 	dockerImages, err := ctx.DockerClient.ImageList(context.Background(), image.ListOptions{})
 	if err != nil {
-		log.Fatalf("Unable to fetch docker images: %s", err)
+		return nil, fmt.Errorf("无法获取镜像列表，请检查 Docker 连接: %w", err)
 	}
 
 	for _, img := range dockerImages {
@@ -38,8 +38,12 @@ func GetImagesList(ctx *svc.ServiceContext) ([]MyType.Image, error) {
 func splitImageNameAndTag(imagesList []MyType.Image) []MyType.Image {
 	for i, imageInfo := range imagesList {
 		if len(imageInfo.RepoTags) != 0 {
-			imagesList[i].ImageName = strings.Split(imageInfo.RepoTags[0], ":")[0]
-			imagesList[i].ImageTag = strings.Split(imageInfo.RepoTags[0], ":")[1]
+			if named, err := reference.ParseNormalizedNamed(imageInfo.RepoTags[0]); err == nil {
+				imagesList[i].ImageName = reference.FamiliarName(named)
+				if tagged, ok := named.(reference.NamedTagged); ok {
+					imagesList[i].ImageTag = tagged.Tag()
+				}
+			}
 		} else if len(imageInfo.RepoDigests) != 0 {
 			imagesList[i].ImageName = strings.Split(imageInfo.RepoDigests[0], "@")[0]
 			imagesList[i].ImageTag = "None"

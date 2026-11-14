@@ -8,24 +8,17 @@ type ContainerRenameReq struct {
 	NewName string `form:"newName"`
 }
 
-type ContainerRestoreReq struct {
-	Filename string `json:"filename"`
-}
-
 type ContainerUpdateReq struct {
 	IdReq
 	ImageNameAndTag string `form:"imageNameAndTag"`
 	ContainerName   string `form:"containerName"`
+	DelOldContainer string `form:"delOldContainer,optional"`
 }
 
 type CreateContainerReq struct {
 	OldName         string `json:"old_name"`
 	NewName         string `json:"new_name"`
 	ImageNameAndTag string `json:"image_name_and_tag"`
-}
-
-type DelContainerBackupReq struct {
-	Filename string `form:"filename"`
 }
 
 type DoLoginReq struct {
