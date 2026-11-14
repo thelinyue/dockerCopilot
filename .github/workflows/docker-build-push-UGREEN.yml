@@ -10,12 +10,8 @@ jobs:
   build-frontend:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout frontend code
+      - name: Checkout monorepo
         uses: actions/checkout@v3
-        with:
-          repository: dongshull/Docker-Copilot-React
-          path: './frontend'
-          ref: 'master'
 
       - name: Setup Node.js
         uses: actions/setup-node@v3

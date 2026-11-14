@@ -1,0 +1,10 @@
+# 开发镜像只需要已编译的 Linux 程序和配置，避免发送前端依赖和本地凭据。
+**
+!.local/
+!.local/bin/
+!.local/bin/dockerCopilot
+!.local/ca-certificates.crt
+!etc/
+!etc/dockerCopilot.yaml
+!dev/
+!dev/Dockerfile

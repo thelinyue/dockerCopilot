@@ -30,3 +30,11 @@ __pycache__/
 /db.sqlite3
 /front/
 /logs/
+/dockerCopilot
+
+# 本地凭据、运行数据及迁移备份仅保存在本机。
+/.local/
+
+# 不导入上游的编辑器个人设置和系统缓存。
+/frontend/.vscode/
+.DS_Store
