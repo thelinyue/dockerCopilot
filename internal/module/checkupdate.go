@@ -44,6 +44,28 @@ func (i *ImageUpdateData) Clear() {
 	i.data = map[string]ImageCheckList{}
 }
 
+func (i *ImageUpdateData) Delete(ids ...string) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	for _, id := range ids {
+		delete(i.data, id)
+	}
+}
+
+func (i *ImageUpdateData) Retain(ids []string) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	current := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		current[id] = true
+	}
+	for id := range i.data {
+		if !current[id] {
+			delete(i.data, id)
+		}
+	}
+}
+
 func RegistryClient(settings node.Settings) *http.Client {
 	proxy := (&httpproxy.Config{HTTPProxy: settings.HTTPProxy, HTTPSProxy: settings.HTTPSProxy}).ProxyFunc()
 	transport := http.DefaultTransport.(*http.Transport).Clone()

@@ -2,11 +2,13 @@ package container
 
 import (
 	"context"
+	"fmt"
 	"github.com/onlyLTY/dockerCopilot/internal/svc"
 	"github.com/onlyLTY/dockerCopilot/internal/types"
 	"github.com/onlyLTY/dockerCopilot/internal/utiles"
 	"github.com/zeromicro/go-zero/core/logx"
 	"os"
+	"strings"
 )
 
 type UpdateLogic struct {
@@ -25,7 +27,15 @@ func NewUpdateLogic(ctx context.Context, svcCtx *svc.ServiceContext) *UpdateLogi
 
 func (l *UpdateLogic) Update(req *types.ContainerUpdateReq) (resp *types.Resp, err error) {
 	resp = &types.Resp{}
-	taskID, err := l.svcCtx.RunTask("更新容器", func(taskID string) error {
+	old, inspectErr := l.svcCtx.DockerClient.ContainerInspect(l.ctx, req.Id)
+	if inspectErr != nil || old.Config == nil {
+		resp.Code, resp.Msg = 400, "无法读取容器，请刷新列表后重试"
+		return resp, fmt.Errorf("%s", resp.Msg)
+	}
+	taskID, err := l.svcCtx.RunTask("更新容器 "+strings.TrimPrefix(old.Name, "/"), svc.ContainerScope(old), "update", func(taskID string) error {
+		if err := l.svcCtx.VerifyContainer(context.Background(), old); err != nil {
+			return err
+		}
 		imageNameAndTag := req.ImageNameAndTag
 		delOldContainer := os.Getenv("DelOldContainer") != "false"
 		if req.DelOldContainer == "false" {

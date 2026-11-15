@@ -110,7 +110,8 @@ func UpdateContainer(s *svc.ServiceContext, id, name, imageRef string, deleteOld
 			return fmt.Errorf("新容器已通过验证，但旧容器清理失败，请手动清理: %w", err)
 		}
 	}
-	s.HubImageInfo.Clear()
+	s.HubImageInfo.Delete(old.ID, newID)
+	s.ScheduleImageCleanup(taskID, old.Image)
 	progress(100, "更新成功")
 	return nil
 }

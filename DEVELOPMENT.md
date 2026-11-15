@@ -75,11 +75,11 @@ go test ./...
 
 使用方式和挂载示例见 [管理功能说明](docs/MANAGEMENT.md)。开发容器默认没有挂载宿主机项目目录；需要测试 Compose 编辑时，在 `dev/compose.yaml` 增加 `COMPOSE_ROOT` 和相同绝对路径的读写挂载，再重新创建开发容器。不能用宿主机目录挂到容器不同路径来测试相对卷。
 
-新增节点接口在 `internal/management/http.go` 手动注册，旧业务路由经管理器包装后，先用 go-zero 原有 JWT 解析器认证，再按设备转发。框架默认鉴权/5xx 日志会转储请求，入口禁用其请求日志，由包装器只记录方法、路径、状态和耗时，避免泄漏密钥、JWT 和 Compose 内容。重新生成 goctl 路由时应保留包装层及管理器注册，不叠加会转储请求的鉴权中间件。节点操作通过 `RunTask` 或同一个 `Operation` 锁串行执行，文件保存也使用此锁。
+新增节点接口在 `internal/management/http.go` 手动注册，旧业务路由经管理器包装后，先用 go-zero 原有 JWT 解析器认证，再按设备转发。框架默认鉴权/5xx 日志会转储请求，入口禁用其请求日志，由包装器只记录方法、路径、状态和耗时，避免泄漏密钥、JWT 和 Compose 内容。重新生成 goctl 路由时应保留包装层及管理器注册，不叠加会转储请求的鉴权中间件。对象操作通过 `RunTask` 的资源范围或 `AcquireContainer` 取得锁：不同项目和独立容器共享节点读锁，同一项目及其容器互斥，独立容器同时锁定实际 ID 和名称以覆盖替换、改名。配置保存还锁定实际文件路径；接管记录只在读改写时串行。镜像删除、清理和程序升级使用节点写锁，升级成功到退出前拒绝新变更。检测及自动更新使用各自的重复执行保护，自动更新只在处理当前对象时取得对象锁。
 
 ```sh
 go test ./...
-go test -race ./internal/node ./internal/module ./internal/svc ./internal/management ./internal/handler
+go test -race ./internal/node ./internal/module ./internal/svc ./internal/management ./internal/handler ./internal/utiles
 npm --prefix frontend run build -- --outDir ../front
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/dockerCopilot-amd64 .
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o /tmp/dockerCopilot-arm64 .
@@ -87,11 +87,11 @@ DOCKERCOPILOT_PROGRAM_FIXTURE=/tmp/dockerCopilot-amd64 DOCKERCOPILOT_PROGRAM_ARC
   go test ./internal/utiles -run TestProgramBuiltArtifact -v
 ```
 
-并发检查在有 C 编译器的 Linux/WSL 环境运行。普通 Go 测试覆盖代理、TLS、平台选择、设置重启恢复、设备认证和不重试、文件安全与冲突、任务互斥及有界记录；真实 Docker 测试默认跳过，需要显式指定独立 daemon：
+并发检查在有 C 编译器的 Linux/WSL 环境运行。普通 Go 测试覆盖代理、TLS、平台选择、设置重启恢复、设备认证和不重试、文件安全与冲突、对象并发、别名互斥、节点独占、异常释放、旧镜像安全清理及有界记录；真实 Docker 测试默认跳过，需要显式指定独立 daemon：
 
 ```sh
 DOCKERCOPILOT_INTEGRATION_HOST=unix:///var/tmp/dockercopilot-it-example/docker.sock \
-  go test ./internal/management -run TestIsolatedDockerLifecycle -v -timeout 8m
+  go test ./internal/management -run '^TestIsolated(DockerLifecycle|ConcurrentOperationsAndCleanup)$' -v -timeout 12m
 ```
 
 项目编辑器的草稿检查另有官方 CLI 测试，不执行容器变更或镜像拉取。它通过本地模拟 Docker 列表发现临时项目，再以 stdin 运行实际 `docker compose config --quiet`，覆盖 JSON override、有序多文件、`.env`、`env_file`、相对卷及中文错误；未显式开启时跳过：

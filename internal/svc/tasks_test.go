@@ -10,7 +10,7 @@ import (
 func TestTasksSerializeFailuresAndBoundRetention(t *testing.T) {
 	s := &ServiceContext{}
 	started, release := make(chan struct{}), make(chan struct{})
-	id, err := s.RunTask("first", func(id string) error {
+	id, err := s.RunTask("first", ProjectScope("a", "/a"), "update", func(id string) error {
 		close(started)
 		<-release
 		p, _ := s.GetProgress(id)
@@ -22,7 +22,7 @@ func TestTasksSerializeFailuresAndBoundRetention(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-started
-	if _, err := s.RunTask("overlap", func(string) error { t.Error("overlap executed"); return nil }); err == nil {
+	if _, err := s.RunTask("overlap", ProjectScope("a", "/a"), "stop", func(string) error { t.Error("overlap executed"); return nil }); err == nil {
 		t.Fatal("overlapping mutation accepted")
 	}
 	close(release)

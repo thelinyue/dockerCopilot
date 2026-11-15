@@ -4,16 +4,19 @@ import (
 	"context"
 	"github.com/docker/docker/api/types/container"
 	"github.com/onlyLTY/dockerCopilot/internal/svc"
+	"time"
 )
 
-func StopContainer(ctx *svc.ServiceContext, id string) error {
+func StopContainer(ctx context.Context, s *svc.ServiceContext, id string) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	timeout := 10
 	signal := "SIGINT"
 	stopOptions := container.StopOptions{
 		Signal:  signal,
 		Timeout: &timeout,
 	}
-	err := ctx.DockerClient.ContainerStop(context.Background(), id, stopOptions)
+	err := s.DockerClient.ContainerStop(ctx, id, stopOptions)
 	if err != nil {
 		return err
 	}

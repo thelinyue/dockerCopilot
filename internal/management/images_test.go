@@ -126,7 +126,7 @@ func TestImagePruneInvalidBusyAndFailure(t *testing.T) {
 	m.Context.Operation.Lock()
 	status, _ := pruneTestRequest(t, address, token, "", `{"type":"unused"}`)
 	m.Context.Operation.Unlock()
-	if status != 400 || calls.Load() != 0 {
+	if status != 409 || calls.Load() != 0 {
 		t.Fatal("节点已有变更时不能执行清理", status, calls.Load())
 	}
 	status, result := pruneTestRequest(t, address, token, "", `{"type":"unused"}`)

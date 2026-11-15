@@ -105,6 +105,7 @@ export function Automation() {
                 <p className="text-xs text-gray-500 dark:text-gray-400" title="已保存计划的下次执行时间">下次 · {date(key === 'checkCron' ? data.nextRuns.check : data.nextRuns.update)}</p>
               </div>)}
             </div>
+            <p className="px-4 sm:px-6 pb-3 text-xs text-gray-500 dark:text-gray-400">已停止的容器仍检测更新，但不自动更新或启动；同一服务有停止副本时整个服务跳过。没有容器的项目暂不检测。更新验证成功后自动清理本次产生且无容器引用的无标签旧镜像。</p>
             <div className="px-4 sm:px-6 py-3 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700/30 flex flex-wrap items-center gap-2">
               <button type="button" className="btn-secondary gap-2 disabled:opacity-50" disabled={busy} onClick={() => run('立即检测', managementAPI.check)}><RefreshCw className="h-4 w-4" />立即检测</button>
               <button type="button" className="btn-secondary gap-2 disabled:opacity-50" disabled={busy} onClick={update}><Play className="h-4 w-4" />立即更新</button>

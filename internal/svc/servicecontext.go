@@ -27,20 +27,27 @@ type ServiceContext struct {
 	DockerClient               *client.Client
 	Settings                   *node.Store
 	Devices                    *node.Devices
-	Operation                  sync.Mutex
+	Operation                  sync.RWMutex
+	operationMu                sync.Mutex
+	operationKeys              map[string]bool
+	restarting                 bool
 	mu                         sync.Mutex
 }
 
 type TaskProgress struct {
-	TaskID     string    `json:"taskID"`
-	Percentage int       `json:"percentage"`
-	Message    string    `json:"message"`
-	Name       string    `json:"name"`
-	DetailMsg  string    `json:"detailMsg"`
-	IsDone     bool      `json:"isDone"`
-	Status     string    `json:"status"`
-	CreatedAt  time.Time `json:"createdAt"`
-	UpdatedAt  time.Time `json:"updatedAt"`
+	TaskID     string        `json:"taskID"`
+	Percentage int           `json:"percentage"`
+	Message    string        `json:"message"`
+	Name       string        `json:"name"`
+	DetailMsg  string        `json:"detailMsg"`
+	IsDone     bool          `json:"isDone"`
+	Status     string        `json:"status"`
+	CreatedAt  time.Time     `json:"createdAt"`
+	UpdatedAt  time.Time     `json:"updatedAt"`
+	Resource   *TaskResource `json:"resource,omitempty"`
+	Action     string        `json:"action,omitempty"`
+	Cleanup    string        `json:"cleanup,omitempty"`
+	OldImages  []string      `json:"-"`
 }
 
 type ProgressStoreType map[string]TaskProgress
@@ -125,15 +132,16 @@ func (ctx *ServiceContext) Tasks() []TaskProgress {
 	return items
 }
 
-// 取得操作锁后再返回任务 ID，保证定时和手动变更不会重复操作同一 Docker 节点。
-func (ctx *ServiceContext) RunTask(name string, fn func(string) error) (string, error) {
-	if !ctx.Operation.TryLock() {
-		return "", fmt.Errorf("本设备正在执行变更，请等待当前任务完成")
+// 先预留对象，再返回任务 ID；切页或请求断开不会释放后台任务的操作锁。
+func (ctx *ServiceContext) RunTask(name string, scope OperationScope, action string, fn func(string) error) (string, error) {
+	release, err := ctx.Acquire(scope)
+	if err != nil {
+		return "", err
 	}
 	id := uuid.NewString()
-	ctx.UpdateProgress(id, TaskProgress{Name: name, Message: "任务已开始", Status: "running"})
+	ctx.UpdateProgress(id, TaskProgress{Name: name, Message: "任务已开始", Status: "running", Resource: scope.Resource, Action: action})
 	go func() {
-		defer ctx.Operation.Unlock()
+		defer release()
 		defer func() {
 			if recover() != nil {
 				p, _ := ctx.GetProgress(id)
@@ -144,6 +152,9 @@ func (ctx *ServiceContext) RunTask(name string, fn func(string) error) (string, 
 			}
 		}()
 		err := fn(id)
+		// 清理镜像需节点独占，先结束对象变更；其他对象忙碌时只跳过清理。
+		release()
+		ctx.CleanupTaskImages(id)
 		p, _ := ctx.GetProgress(id)
 		p.IsDone = true
 		if err != nil {
@@ -155,6 +166,9 @@ func (ctx *ServiceContext) RunTask(name string, fn func(string) error) (string, 
 			p.Status = "succeeded"
 			p.Percentage = 100
 			p.Message = "任务完成"
+			if p.Cleanup != "" {
+				p.Message += "；" + p.Cleanup
+			}
 		}
 		ctx.UpdateProgress(id, p)
 		if err != nil {
@@ -162,4 +176,12 @@ func (ctx *ServiceContext) RunTask(name string, fn func(string) error) (string, 
 		}
 	}()
 	return id, nil
+}
+
+func (ctx *ServiceContext) TaskResource(id string, resource *TaskResource, action string) {
+	ctx.mu.Lock()
+	defer ctx.mu.Unlock()
+	p := ctx.ProgressStore[id]
+	p.Resource, p.Action = resource, action
+	ctx.ProgressStore[id] = p
 }

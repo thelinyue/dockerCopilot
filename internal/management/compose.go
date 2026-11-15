@@ -21,7 +21,9 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
+	"github.com/google/uuid"
 	"github.com/onlyLTY/dockerCopilot/internal/node"
+	"github.com/onlyLTY/dockerCopilot/internal/svc"
 	"github.com/onlyLTY/dockerCopilot/internal/utiles"
 	"gopkg.in/yaml.v3"
 )
@@ -313,10 +315,6 @@ func (m *Manager) Project(ctx context.Context, id string) (Project, error) {
 }
 
 func (m *Manager) ImportProject(name string, files []string) (Project, error) {
-	if !m.Context.Operation.TryLock() {
-		return Project{}, fmt.Errorf("本设备正在执行变更，请稍后接管")
-	}
-	defer m.Context.Operation.Unlock()
 	if len(files) == 0 || len(files) > 20 {
 		return Project{}, fmt.Errorf("请选择 1 至 20 个已有配置文件，按主文件、override 顺序填写")
 	}
@@ -335,6 +333,14 @@ func (m *Manager) ImportProject(name string, files []string) (Project, error) {
 		return Project{}, fmt.Errorf("项目名只能包含小写字母、数字、下划线和短横线，并以字母或数字开头")
 	}
 	p := projectFromFiles(name, dir, files)
+	release, err := m.Context.Acquire(svc.ProjectScope(name, dir))
+	if err != nil {
+		return p, err
+	}
+	defer release()
+	// 接管记录是各项目共用的单个文件，仅在读改写记录时串行。
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	var items []Project
 	path := filepath.Join(node.DataDir(), "compose-projects.json")
 	if b, err := os.ReadFile(path); err == nil {
@@ -374,10 +380,6 @@ func (m *Manager) ReadFile(ctx context.Context, id string, index int) (string, e
 }
 
 func (m *Manager) SaveFile(ctx context.Context, id string, index int, original, content string) error {
-	if !m.Context.Operation.TryLock() {
-		return fmt.Errorf("本设备正在执行变更，请等待任务完成后保存")
-	}
-	defer m.Context.Operation.Unlock()
 	p, err := m.Project(ctx, id)
 	if err != nil {
 		return err
@@ -388,6 +390,20 @@ func (m *Manager) SaveFile(ctx context.Context, id string, index int, original, 
 	path, _, err := resolveFile(ComposeRoot(), p.Files[index])
 	if err != nil {
 		return err
+	}
+	scope := svc.ProjectScope(p.Name, p.Directory)
+	scope.Keys = append(scope.Keys, "compose-file:"+path)
+	release, err := m.Context.Acquire(scope)
+	if err != nil {
+		return err
+	}
+	defer release()
+	current, err := m.Project(ctx, id)
+	if err != nil {
+		return err
+	}
+	if index >= len(current.Files) || current.Files[index] != p.Files[index] {
+		return fmt.Errorf("项目文件顺序已变化，请重新加载后保存")
 	}
 	if err := validateSyntax(path, content); err != nil {
 		return err
@@ -532,7 +548,9 @@ func (m *Manager) ComposeAction(ctx context.Context, p Project, action string, s
 			return fmt.Errorf("请在宿主机升级 DockerCopilot 自身所属的项目")
 		}
 	}
-	snapshotPath := filepath.Join(node.DataDir(), "recovery", taskID+".json")
+	// 自动更新的一个任务会依次处理多个项目，恢复资料和镜像标签必须各自唯一。
+	recoveryID := uuid.NewString()
+	snapshotPath := filepath.Join(node.DataDir(), "recovery", recoveryID+".json")
 	if err := node.WriteJSON(snapshotPath, old); err != nil {
 		return err
 	}
@@ -540,14 +558,16 @@ func (m *Manager) ComposeAction(ctx context.Context, p Project, action string, s
 	cleanup := true
 	defer func() {
 		if cleanup {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
 			for _, pin := range pins {
-				m.Context.DockerClient.ImageRemove(context.Background(), pin, image.RemoveOptions{PruneChildren: false})
+				m.Context.DockerClient.ImageRemove(cleanupCtx, pin, image.RemoveOptions{PruneChildren: false})
 			}
 			os.Remove(snapshotPath)
 		}
 	}()
 	for i, v := range old {
-		pin := "dockercopilot-recovery/" + taskID + ":" + strconv.Itoa(i)
+		pin := "dockercopilot-recovery/" + recoveryID + ":" + strconv.Itoa(i)
 		if err := m.Context.DockerClient.ImageTag(ctx, v.Image, pin); err != nil {
 			return fmt.Errorf("保留旧镜像失败，尚未修改容器: %w", err)
 		}
@@ -594,7 +614,10 @@ func (m *Manager) ComposeAction(ctx context.Context, p Project, action string, s
 		}
 	}
 	if deployErr == nil {
-		m.Context.HubImageInfo.Clear()
+		for _, v := range old {
+			m.Context.HubImageInfo.Delete(v.ID)
+			m.Context.ScheduleImageCleanup(taskID, v.Image)
+		}
 		return nil
 	}
 	m.message(taskID, 75, "部署失败，正在恢复更新前的实际容器配置")

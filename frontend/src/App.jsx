@@ -30,7 +30,7 @@ function AppContent() {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [deviceId, setDeviceId] = useState(() => localStorage.getItem('docker_copilot_device') || 'local')
   const [dirty, setDirty] = useState(false)
-  const [activeTab, setActiveTab] = useState('#containers')
+  const [activeTab, setActiveTab] = useState('#compose')
   const [containerScope, setContainerScope] = useState(null)
   const [composeTarget, setComposeTarget] = useState(null)
   const [windowWidth, setWindowWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1024)
@@ -121,6 +121,7 @@ function AppContent() {
   }, [])
 
   const handleLogin = () => {
+    setActiveTab('#compose')
     setIsAuthenticated(true)
     // 触发自定义事件通知其他组件认证状态已更新
     window.dispatchEvent(new CustomEvent('authChange', { detail: { authenticated: true } }))
@@ -192,7 +193,7 @@ function AppContent() {
       case '#about':
         return <About />
       default:
-        return <Containers scope={containerScope} onClearScope={() => setContainerScope(null)} onOpenCompose={openCompose} />
+        return <Compose onDirty={setDirty} initialTarget={composeTarget} onOpenContainers={openContainers} />
     }
   }
 

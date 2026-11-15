@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import { useDeviceAPI } from '../hooks/useDevice.jsx'
 import { cn } from '../utils/cn.js'
+import { useResourceTasks, containerResource, projectResource } from '../hooks/useResourceTasks.js'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getImageLogo } from '../config/imageLogos.js'
 import icons8Img from '../assets/icons8.png'
@@ -72,13 +73,13 @@ export function Containers({ scope, onClearScope, onOpenCompose }) {
   const { deviceId, containerAPI, progressAPI, imageAPI, managementAPI } = useDeviceAPI()
   const queryClient = useQueryClient()
   const confirm = useConfirmation()
+  const { getTask, submitOperation } = useResourceTasks()
   const [selectedContainer, setSelectedContainer] = useState(null)
   // 添加批量操作相关的状态
   const [selectedContainers, setSelectedContainers] = useState([])
   const [isBatchMode, setIsBatchMode] = useState(false)
   // 添加操作状态跟踪
-  const [containerActions, setContainerActions] = useState({}) // 跟踪每个容器的操作状态
-  const [updateTasks, setUpdateTasks] = useState({}) // 跟踪更新任务
+  const [localContainerActions, setContainerActions] = useState({}) // 跟踪每个容器的操作状态
   // 添加筛选状态
   const [filterStatus, setFilterStatus] = useState(null) // null 表示显示全部
 
@@ -108,6 +109,12 @@ export function Containers({ scope, onClearScope, onOpenCompose }) {
     },
     refetchInterval: 10000, // 每10秒自动刷新一次
   })
+  const containerActions = { ...localContainerActions }
+  for (const container of containers) {
+    const task = getTask(containerResource(container))
+    if (task && !task.isDone) containerActions[container.id] = { action: task.action, loading: true, progress: task.message, percentage: task.percentage }
+  }
+  const operationResource = id => containerResource(containers.find(container => container.id === id) || { id, name: id })
   // 旧节点没有目录字段时按项目返回的容器 ID 匹配，避免同名项目串入筛选。
   const projectContainers = containers.filter(container => !scope || (
     container.composeProject === scope.projectName &&
@@ -174,13 +181,13 @@ export function Containers({ scope, onClearScope, onOpenCompose }) {
 
       switch (action) {
         case 'start':
-          await containerAPI.startContainer(containerId)
+          await submitOperation(operationResource(containerId), 'start', () => containerAPI.startContainer(containerId))
           break
         case 'stop':
-          await containerAPI.stopContainer(containerId)
+          await submitOperation(operationResource(containerId), 'stop', () => containerAPI.stopContainer(containerId))
           break
         case 'restart':
-          await containerAPI.restartContainer(containerId)
+          await submitOperation(operationResource(containerId), 'restart', () => containerAPI.restartContainer(containerId))
           break
         default:
           break
@@ -252,133 +259,34 @@ export function Containers({ scope, onClearScope, onOpenCompose }) {
       setConfirmModal({ isOpen: true, title: '按项目服务更新', message: '选中的容器包含项目服务，请在项目页面更新，或在自动更新页面按排除规则统一执行。', onConfirm: () => { setConfirmModal({ isOpen: false }); onOpenCompose?.(sameProject ? { ...first, composeService: '' } : null) } })
       return
     }
-    try {
-      // 为所有选中的容器设置加载状态
-      selectedContainers.forEach(containerId => {
-        setContainerActions(prev => ({
-          ...prev,
-          [containerId]: { action, loading: true }
-        }))
-      })
-
-      // 立即更新本地状态提供即时反馈
-      if (action === 'start' || action === 'stop' || action === 'restart') {
-        queryClient.setQueryData([deviceId, 'containers'], (oldData) => {
-          if (!oldData) return oldData
-
-          return oldData.map(container => {
-            if (selectedContainers.includes(container.id)) {
-              let newStatus = container.status
-              switch (action) {
-                case 'start':
-                  newStatus = 'running'
-                  break
-                case 'stop':
-                  newStatus = 'stopped'
-                  break
-                case 'restart':
-                  newStatus = 'running'
-                  break
-                default:
-                  break
-              }
-              return { ...container, status: newStatus }
-            }
-            return container
-          })
-        })
-      }
-
-      // 对每个选中的容器执行操作
-      for (const containerId of selectedContainers) {
-        try {
-          const container = containers.find(c => c.id === containerId)
-
-          switch (action) {
-            case 'start':
-              await containerAPI.startContainer(containerId)
-              break
-            case 'stop':
-              await containerAPI.stopContainer(containerId)
-              break
-            case 'restart':
-              await containerAPI.restartContainer(containerId)
-              break
-            case 'update':
-              if (container) {
-                const response = await containerAPI.updateContainer(
-                  containerId,
-                  container.name,
-                  container.usingImage,
-                  true
-                )
-
-                if (response.data.code === 200 || response.data.code === 0) {
-                  const taskID = response.data.data?.taskID
-                  if (taskID) {
-                    // 保存任务ID并开始轮询进度
-                    setUpdateTasks(prev => ({
-                      ...prev,
-                      [containerId]: taskID
-                    }))
-                    // 串行等待上一项完成，避免与节点操作锁冲突。
-                    await pollProgress(containerId, taskID)
-                  }
-                }
-              }
-              break
-            default:
-              break
-          }
-        } finally {
-          // 对于非更新操作，立即清除操作状态
-          if (action !== 'update') {
-            setContainerActions(prev => {
-              const newState = { ...prev }
-              delete newState[containerId]
-              return newState
-            })
-          }
+    const failures = []
+    for (const containerId of [...selectedContainers]) {
+      const container = containers.find(item => item.id === containerId)
+      if (!container) continue
+      try {
+        if (action === 'update') {
+          if (container.status?.toLowerCase() !== 'running') throw new Error('容器已停止，请先启动后再更新')
+          const response = await submitOperation(containerResource(container), 'update', () => containerAPI.updateContainer(containerId, container.name, container.usingImage, true))
+          const taskID = response.data.data?.taskID
+          if (taskID) await pollProgress(containerId, taskID)
+        } else {
+          const request = { start: containerAPI.startContainer, stop: containerAPI.stopContainer, restart: containerAPI.restartContainer }[action]
+          await submitOperation(containerResource(container), action, () => request(containerId))
         }
+      } catch (error) {
+        // 一项冲突或失败只记录这一项，继续处理其余所选对象。
+        failures.push(`${container.name}：${error.message}`)
       }
-
-      // 如果不是更新操作，延迟刷新以获取最新数据
-      await queryClient.invalidateQueries({ queryKey: [deviceId, 'composeProjects'] })
-      if (action !== 'update') {
-        setTimeout(() => {
-          refetch()
-        }, 1500)
-      }
-
-      // 清除选中状态
-      setSelectedContainers([])
-      setIsBatchMode(false)
-    } catch (error) {
-      console.error('批量操作失败:', error)
-      // 清除所有操作状态
-      selectedContainers.forEach(containerId => {
-        setContainerActions(prev => {
-          const newState = { ...prev }
-          delete newState[containerId]
-          return newState
-        })
-      })
-
-      // 使用自定义弹窗显示错误信息
-      setConfirmModal({
-        isOpen: true,
-        title: '操作失败',
-        message: '批量操作失败: ' + (error.response?.data?.msg || error.message || '未知错误'),
-        onConfirm: () => setConfirmModal({ isOpen: false }),
-        onCancel: null,
-        type: 'danger'
-      });
     }
+    for (const key of ['containers', 'composeProjects']) await queryClient.invalidateQueries({ queryKey: [deviceId, key] })
+    setSelectedContainers([])
+    setIsBatchMode(false)
+    if (failures.length) setConfirmModal({ isOpen: true, title: '部分操作未完成', message: failures.join('\n'), onConfirm: () => setConfirmModal({ isOpen: false }), onCancel: null, type: 'danger' })
   }
 
   const handleRenameContainer = async (containerId, newName) => {
     try {
-      const response = await containerAPI.renameContainer(containerId, newName)
+      const response = await submitOperation(operationResource(containerId), 'rename', () => containerAPI.renameContainer(containerId, newName))
       if (response.data.code === 200 || response.data.code === 0) {
         await refetch()
         console.log('重命名成功')
@@ -386,33 +294,25 @@ export function Containers({ scope, onClearScope, onOpenCompose }) {
     } catch (error) {
       console.error('重命名容器失败:', error)
       console.error(`重命名失败: ${error.response?.data?.msg || error.message}`)
+      throw error
     }
   }
 
   const handleUpdateContainer = async (containerId, existingTaskID = null) => {
+    let submitted = false
     try {
       const container = containers.find(c => c.id === containerId)
-      if (!container) {
-        console.error('容器未找到')
+      if (!container) throw new Error('容器未找到，请刷新列表后重试。')
+      if (existingTaskID) {
+        // 详情窗口已登记任务，后续进度由两页共用的对象任务轮询接管。
+        setSelectedContainer(null)
         return
       }
-
-      console.log(`开始更新容器 "${container.name}"，使用镜像: ${container.usingImage}`)
 
       setContainerActions(prev => ({
         ...prev,
         [containerId]: { action: 'update', loading: true, progress: '正在准备更新...', percentage: 0 }
       }))
-
-      if (existingTaskID) {
-        console.log('复用已有更新任务, taskID:', existingTaskID)
-        setUpdateTasks(prev => ({
-          ...prev,
-          [containerId]: existingTaskID
-        }))
-        await pollProgress(containerId, existingTaskID)
-        return
-      }
 
       if (container.composeProject) {
         const { projects } = await managementAPI.projects()
@@ -423,90 +323,33 @@ export function Containers({ scope, onClearScope, onOpenCompose }) {
         if (project.error) throw new Error(project.error)
         if (!await confirm({
           title: '更新项目服务',
-          message: `拉取并更新 ${project.name} 的 ${service.name} 服务？该服务的全部副本将一并更新，并应用已保存的配置；卷内数据无法回退。`,
+          message: `拉取并更新 ${project.name} 的 ${service.name} 服务？该服务的全部副本将一并更新，并应用已保存的配置，可能启动该服务的停止副本；卷内数据无法回退。`,
           confirmText: '更新',
-        })) {
-          setContainerActions(prev => { const next = { ...prev }; delete next[containerId]; return next })
-          return
-        }
-        const { taskID } = await managementAPI.composeAction(project.id, 'update', [service.name])
-        setSelectedContainer(null)
-        queryClient.setQueryData([deviceId, 'composeAction'], { taskID, projectId: project.id, action: 'update' })
-        setUpdateTasks(prev => ({ ...prev, [containerId]: taskID }))
-        await queryClient.invalidateQueries({ queryKey: [deviceId, 'tasks'] })
-        await pollProgress(containerId, taskID)
-        return
-      }
-
-      // 注意参数顺序: id, containerName, imageNameAndTag, delOldContainer
-      const response = await containerAPI.updateContainer(
-        containerId,
-        container.name,
-        container.usingImage,
-        true
-      )
-
-      console.log('更新容器响应:', response.data)
-
-      if (response.data.code === 200 || response.data.code === 0) {
-        const taskID = response.data.data?.taskID
-
-        if (taskID) {
-          console.log('开始轮询进度, taskID:', taskID)
-          // 保存任务ID并开始轮询进度
-          setUpdateTasks(prev => ({
-            ...prev,
-            [containerId]: taskID
-          }))
-
-          await pollProgress(containerId, taskID)
-        } else {
-          // 如果没有返回taskID,说明更新可能立即完成
-          setContainerActions(prev => {
-            const newState = { ...prev }
-            delete newState[containerId]
-            return newState
-          })
-          await refetch()
-
-        }
+        })) return
+        submitted = true
+        await submitOperation(projectResource(project), 'update', () => managementAPI.composeAction(project.id, 'update', [service.name]))
       } else {
-        throw new Error(response.data.msg || '更新失败')
+        if (container.status?.toLowerCase() !== 'running') throw new Error('容器已停止，请先启动后再更新；自动更新会保持其停止状态。')
+        submitted = true
+        await submitOperation(containerResource(container), 'update', () => containerAPI.updateContainer(containerId, container.name, container.usingImage, true))
       }
+      setSelectedContainer(null)
     } catch (error) {
       console.error('更新容器失败:', error)
       setSelectedContainer(null)
-      setContainerActions(prev => {
-        const newState = { ...prev }
-        delete newState[containerId]
-        return newState
-      })
-
-      // 增加超时错误的处理
-      if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
-        console.error(`更新操作已提交，但连接超时。请稍后手动刷新页面查看操作结果`)
-        // 即使超时也触发轮询，因为操作可能仍在进行中
-        // 这里我们不知道taskID，所以无法启动轮询，只能提示用户稍后查看
-      } else {
-        // 针对名称冲突提供特定的解决方案
-        let errorMessage = error.response?.data?.msg || error.message;
-        if (errorMessage.includes('重命名') || errorMessage.includes('name conflict') || errorMessage.includes('名称冲突')) {
-          errorMessage += '\n\n检测到容器名称冲突问题，建议解决方案：\n' +
-            '1. 手动删除或重命名冲突的容器\n' +
-            '2. 使用不同的容器名称进行更新\n' +
-            '3. 先停止并重命名当前容器，再进行更新操作';
-        }
-
-        // 使用自定义弹窗显示错误信息
+      // 已提交的失败只在对象卡片显示一次，前置条件失败才使用提示窗口。
+      if (!submitted) {
         setConfirmModal({
           isOpen: true,
-          title: '更新失败',
-          message: errorMessage,
+          title: '无法更新',
+          message: error.message,
           onConfirm: () => setConfirmModal({ isOpen: false }),
           onCancel: null,
           type: 'danger'
-        });
+        })
       }
+    } finally {
+      setContainerActions(prev => { const next = { ...prev }; delete next[containerId]; return next })
     }
   }
 
@@ -530,7 +373,6 @@ export function Containers({ scope, onClearScope, onOpenCompose }) {
       throw new Error('等待结果超时，请在原设备任务列表确认，避免重复提交。')
     } finally {
       setContainerActions(prev => { const next = { ...prev }; delete next[containerId]; return next })
-      setUpdateTasks(prev => { const next = { ...prev }; delete next[containerId]; return next })
     }
   }
 
@@ -889,6 +731,7 @@ export function Containers({ scope, onClearScope, onOpenCompose }) {
             {visibleContainers
               .map((container) => {
                 const isSelected = selectedContainers.includes(container.id)
+                const objectTask = getTask(containerResource(container))
                 return (
                   <div key={container.id} className="group relative">
                     {container.composeProject && <span title={`所属项目：${container.composeProject}${container.composeService ? ` / ${container.composeService}` : ''}`} className="absolute -top-2 left-3 z-30 max-w-[calc(100%-6rem)] inline-flex items-center gap-1 rounded-md border border-primary-200 dark:border-primary-800 bg-primary-50 dark:bg-gray-800 px-1.5 py-0.5 text-[10px] font-medium text-primary-600 dark:text-primary-400 shadow-sm">
@@ -1094,6 +937,7 @@ export function Containers({ scope, onClearScope, onOpenCompose }) {
                           {container.composeProject && <button type="button" onClick={event => { event.stopPropagation(); onOpenCompose?.(container) }} aria-label={`打开 ${container.name} 所属项目`} title="打开所属项目" className="flex-1 flex items-center justify-center gap-1 px-1 py-1.5 text-primary-600 dark:text-primary-400 bg-white dark:bg-gray-800 hover:bg-primary-50 dark:hover:bg-primary-900/20 border border-gray-200 dark:border-gray-700 hover:border-primary-200 dark:hover:border-primary-800 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap"><Boxes className="h-4 w-4" /><span>项目</span></button>}
                         </div>
                       )}
+                      {objectTask?.isDone && objectTask.status !== 'succeeded' && <p role="alert" className="relative z-10 mt-3 text-xs text-red-600 dark:text-red-400 whitespace-pre-wrap break-words">{objectTask.message}</p>}
                     </div>
                   </div>
                 )
@@ -1126,6 +970,9 @@ export function Containers({ scope, onClearScope, onOpenCompose }) {
 
 // 容器详情弹窗组件
 function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction, onOpenCompose }) {
+  const { getTask, submitOperation } = useResourceTasks()
+  const objectTask = getTask(containerResource(container))
+  const resourceBusy = !!objectTask && !objectTask.isDone
   const { deviceId, containerAPI, imageAPI } = useDeviceAPI()
   const queryClient = useQueryClient()
   const [name, setName] = useState(container.name)
@@ -1339,12 +1186,12 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
         console.log(`新镜像: ${imageNameAndTag}`)
 
         // 直接调用API更新容器
-        const response = await containerAPI.updateContainer(
+        const response = await submitOperation(containerResource(container), 'update', () => containerAPI.updateContainer(
           container.id,
           container.name,
           imageNameAndTag,
           true // 删除旧容器
-        )
+        ))
 
         console.log('更新容器响应:', response.data)
 
@@ -1531,12 +1378,13 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
+                disabled={resourceBusy || isRenaming || isActionProcessing || isUpdating}
                 className="input flex-1"
                 placeholder="输入容器名称"
               />
               <button
                 onClick={handleRename}
-                disabled={isRenaming || (name === currentContainer.name) || isActionProcessing || isUpdating}
+                disabled={resourceBusy || isRenaming || (name === currentContainer.name) || isActionProcessing || isUpdating}
                 className={`px-3 py-2 text-sm rounded-lg transition-colors ${isRenaming || (name === currentContainer.name)
                   ? 'bg-gray-200 text-gray-500 cursor-not-allowed dark:bg-gray-700 dark:text-gray-400'
                   : 'bg-primary-600 text-white hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600'
@@ -1564,12 +1412,12 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
                 onChange={(e) => setImageNameAndTag(e.target.value)}
                 className="input flex-1"
                 placeholder="例如: nginx:latest"
-                disabled={isActionProcessing || isUpdating}
+                disabled={resourceBusy || isActionProcessing || isUpdating}
                 readOnly={!!currentContainer.composeProject}
               />
               <button
                 onClick={handleSave}
-                disabled={isUpdating || (!currentContainer.composeProject && ((imageNameAndTag === currentContainer.usingImage) || !imageNameAndTag.trim()))}
+                disabled={resourceBusy || isUpdating || (!currentContainer.composeProject && ((imageNameAndTag === currentContainer.usingImage) || !imageNameAndTag.trim()))}
                 className={`px-3 py-2 text-sm rounded-lg transition-colors flex items-center ${isUpdating || (!currentContainer.composeProject && ((imageNameAndTag === currentContainer.usingImage) || !imageNameAndTag.trim()))
                   ? 'bg-gray-200 text-gray-500 cursor-not-allowed dark:bg-gray-700 dark:text-gray-400'
                   : 'bg-primary-600 text-white hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600'
@@ -1598,7 +1446,7 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
             <div className="flex gap-2 w-full sm:w-auto">
               <button
                 onClick={() => onUpdate(container.id)}
-                disabled={isActionProcessing || isUpdating}
+                disabled={resourceBusy || isActionProcessing || isUpdating}
                 className={`flex-1 sm:flex-none px-2 sm:px-4 py-2 text-sm rounded-lg transition-colors flex items-center justify-center sm:justify-start gap-1 sm:gap-2 ${isActionProcessing && currentAction === 'update'
                   ? 'bg-gray-200 text-gray-500 cursor-not-allowed dark:bg-gray-700 dark:text-gray-400'
                   : 'bg-purple-600 text-white hover:bg-purple-700 dark:bg-purple-500 dark:hover:bg-purple-600'
@@ -1622,7 +1470,7 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
                 <>
                   <button
                     onClick={() => handleContainerAction('stop')}
-                    disabled={isActionProcessing || isUpdating}
+                    disabled={resourceBusy || isActionProcessing || isUpdating}
                     className={`flex-1 sm:flex-none px-2 sm:px-4 py-2 text-sm rounded-lg transition-colors flex items-center justify-center sm:justify-start gap-1 sm:gap-2 ${isActionProcessing && currentAction === 'stop'
                       ? 'bg-gray-200 text-gray-500 cursor-not-allowed dark:bg-gray-700 dark:text-gray-400'
                       : 'bg-red-600 text-white hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600'
@@ -1643,7 +1491,7 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
                   </button>
                   <button
                     onClick={() => handleContainerAction('restart')}
-                    disabled={isActionProcessing || isUpdating}
+                    disabled={resourceBusy || isActionProcessing || isUpdating}
                     className={`flex-1 sm:flex-none px-2 sm:px-4 py-2 text-sm rounded-lg transition-colors flex items-center justify-center sm:justify-start gap-1 sm:gap-2 ${isActionProcessing && currentAction === 'restart'
                       ? 'bg-gray-200 text-gray-500 cursor-not-allowed dark:bg-gray-700 dark:text-gray-400'
                       : 'bg-yellow-500 text-white hover:bg-yellow-600 dark:bg-yellow-500 dark:hover:bg-yellow-600'
@@ -1666,7 +1514,7 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
               ) : (
                 <button
                   onClick={() => handleContainerAction('start')}
-                  disabled={isActionProcessing || isUpdating}
+                  disabled={resourceBusy || isActionProcessing || isUpdating}
                   className={`flex-1 sm:flex-none px-2 sm:px-4 py-2 text-sm rounded-lg transition-colors flex items-center justify-center sm:justify-start gap-1 sm:gap-2 ${isActionProcessing && currentAction === 'start'
                     ? 'bg-gray-200 text-gray-500 cursor-not-allowed dark:bg-gray-700 dark:text-gray-400'
                     : 'bg-green-600 text-white hover:bg-green-700 dark:bg-green-500 dark:hover:bg-green-600'

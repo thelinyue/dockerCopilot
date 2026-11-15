@@ -15,6 +15,7 @@ import (
 
 	"github.com/onlyLTY/dockerCopilot/internal/config"
 	"github.com/onlyLTY/dockerCopilot/internal/node"
+	"github.com/onlyLTY/dockerCopilot/internal/svc"
 	"github.com/onlyLTY/dockerCopilot/internal/types"
 	"github.com/zeromicro/go-zero/rest"
 	"github.com/zeromicro/go-zero/rest/httpx"
@@ -23,7 +24,11 @@ import (
 
 func reply(w http.ResponseWriter, data any, err error) {
 	if err != nil {
-		httpx.WriteJson(w, http.StatusBadRequest, types.Resp{Code: 400, Msg: err.Error()})
+		status := http.StatusBadRequest
+		if svc.IsBusy(err) {
+			status = http.StatusConflict
+		}
+		httpx.WriteJson(w, status, types.Resp{Code: status, Msg: err.Error()})
 		return
 	}
 	httpx.OkJson(w, types.Resp{Code: 200, Msg: "操作成功", Data: data})
@@ -94,14 +99,20 @@ func (m *Manager) Wrap(next http.HandlerFunc) http.HandlerFunc {
 			io.Copy(w, resp.Body)
 			return
 		}
-		// 旧的同步变更接口也参与同一节点操作锁，异步更新由 RunTask 持锁。
-		legacyWrite := strings.HasPrefix(r.URL.Path, "/api/image/") || (strings.HasPrefix(r.URL.Path, "/api/container/") && r.Method != http.MethodGet && !strings.HasSuffix(r.URL.Path, "/update"))
-		if legacyWrite {
-			if !m.Context.Operation.TryLock() {
-				reply(w, nil, fmt.Errorf("本设备正在执行变更，请等待任务完成"))
+		if strings.HasPrefix(r.URL.Path, "/api/image/") {
+			release, err := m.Context.Acquire(svc.OperationScope{})
+			if err != nil {
+				reply(w, nil, err)
 				return
 			}
-			defer m.Context.Operation.Unlock()
+			defer release()
+		} else if strings.HasPrefix(r.URL.Path, "/api/container/") && r.Method != http.MethodGet && !strings.HasSuffix(r.URL.Path, "/update") {
+			_, release, err := m.Context.AcquireContainer(r.Context(), pathvar.Vars(r)["id"], r.URL.Query().Get("newName"))
+			if err != nil {
+				reply(w, nil, err)
+				return
+			}
+			defer release()
 		}
 		next(w, r)
 	})
@@ -148,10 +159,11 @@ func (m *Manager) Routes(server *rest.Server) {
 	for _, item := range []struct {
 		path, name string
 		fn         func(context.Context, string) error
-	}{{"/checks", "手动检测", m.Check}, {"/auto-update", "手动执行自动更新规则", m.AutoUpdate}} {
+		job        string
+	}{{"/checks", "手动检测", m.Check, "check"}, {"/auto-update", "手动执行自动更新规则", m.AutoUpdate, "auto-update"}} {
 		item := item
 		add("POST", item.path, func(w http.ResponseWriter, r *http.Request) {
-			id, err := m.Context.RunTask(item.name, func(id string) error {
+			id, err := m.Context.RunTask(item.name, svc.OperationScope{Job: item.job}, item.job, func(id string) error {
 				ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
 				defer cancel()
 				return item.fn(ctx, id)
@@ -240,10 +252,14 @@ func (m *Manager) Routes(server *rest.Server) {
 			reply(w, nil, fmt.Errorf("不支持的操作"))
 			return
 		}
-		id, err := m.Context.RunTask("项目 "+p.Name+" · "+composeOperationNames[v.Action], func(id string) error {
+		id, err := m.Context.RunTask("项目 "+p.Name+" · "+composeOperationNames[v.Action], svc.ProjectScope(p.Name, p.Directory), v.Action, func(id string) error {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 			defer cancel()
-			return m.ComposeAction(ctx, p, v.Action, v.Services, id, v.Action == "update")
+			current, err := m.Project(ctx, p.ID)
+			if err != nil {
+				return err
+			}
+			return m.ComposeAction(ctx, current, v.Action, v.Services, id, v.Action == "update")
 		})
 		reply(w, map[string]string{"taskID": id}, err)
 	})

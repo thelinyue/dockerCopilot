@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Boxes, RefreshCw, Save, FolderOpen, Plus, Play, Square, RotateCcw, Download, Upload, Check, Server, ChevronDown, AlertCircle } from 'lucide-react'
 import { useDeviceAPI } from '../hooks/useDevice.jsx'
 import { cn } from '../utils/cn.js'
-import { useTaskProgress } from './Tasks.jsx'
+import { useResourceTasks, projectResource } from '../hooks/useResourceTasks.js'
 import { Dialog, Notice, UpdateBadge, useConfirmation } from './ManagementUI.jsx'
 
 const actionLabels = { start: '启动', stop: '停止', restart: '重启', pull: '拉取镜像', deploy: '部署', update: '拉取并更新' }
@@ -97,24 +97,25 @@ export function Compose({ onDirty, initialTarget, onOpenContainers }) {
   const [importName, setImportName] = useState('')
   const [importFiles, setImportFiles] = useState('')
   const [importError, setImportError] = useState('')
-  // 保留当前设备的操作位置，切到容器页再返回时仍能在原项目卡片查看进度。
-  const { data: task } = useQuery({ queryKey: [deviceId, 'composeAction'], enabled: false, initialData: null, gcTime: Infinity })
-  const { data: progress, error: progressError, isFetching: fetchingProgress, refetch: refreshProgress } = useTaskProgress(task)
-  const taskRunning = !!task && !progress?.isDone
-  const mutating = busy || taskRunning
-  const taskStatus = progressError ? 'unavailable' : progress?.status || 'running'
-  const taskMessage = progressError ? '进度暂不可用，请刷新进度' : progress?.message || '正在准备操作…'
-  const taskLabel = taskRunning ? `${actionProgressLabels[task.action]}${progress?.percentage > 0 ? ` ${Math.round(progress.percentage)}%` : ''}` : actionResultLabels[progress?.status] || '操作结束'
+  const { getTask, submitOperation, error: taskReadError, refresh: refreshProgress, isFetching: fetchingProgress } = useResourceTasks()
   const requestNumber = useRef(0)
   const openedTarget = useRef(null)
   const editor = useRef(null)
   const dirty = loaded && content !== original.replace(/\r\n/g, '\n')
   const project = projects.find(item => item.id === projectId)
+  const task = project ? getTask(projectResource(project)) : null
+  const progress = task
+  const taskRunning = !!task && !task.isDone
+  const mutating = busy || taskRunning
+  const progressError = taskRunning && taskReadError
+  const taskStatus = progressError ? 'unavailable' : task?.status || 'running'
+  const taskMessage = progressError ? '进度暂不可用，请刷新进度' : task?.message || '正在准备操作…'
+  const taskLabel = taskRunning ? `${actionProgressLabels[task.action] || '处理中'}${task?.percentage > 0 ? ` ${Math.round(task.percentage)}%` : ''}` : actionResultLabels[task?.status] || '操作结束'
   const targetServices = project?.services.filter(service => !services.length || services.includes(service.name)) || []
   const running = targetServices.some(service => service.running > 0)
   const hasStopped = targetServices.some(service => service.running < service.total)
   const actionDisabled = mutating || !!project?.error || !info?.capabilities.compose
-  const projectTask = task?.projectId === projectId
+  const projectTask = !!task
   const currentValidation = loaded && validation?.projectId === projectId && validation.index === index && validation.content === content ? validation : null
   const checking = loaded && (!currentValidation || currentValidation.status === 'checking')
   const invalid = currentValidation?.status === 'done' && !currentValidation.valid
@@ -128,12 +129,6 @@ export function Compose({ onDirty, initialTarget, onOpenContainers }) {
   // 稳定排序只提升有运行服务的项目，同组保留原有顺序，也包含部分运行的项目。
   const visibleProjects = projects.filter(item => filterStatus === 'update' ? hasProjectUpdate(item) : filterStatus === 'all' || getProjectState(item).status === filterStatus)
     .sort((first, second) => Number(second.services.some(service => service.running > 0)) - Number(first.services.some(service => service.running > 0)))
-  useEffect(() => {
-    if (!task || !progress?.isDone || progress.status !== 'succeeded') return
-    // 成功提示短暂展示后恢复实际状态；失败结果保留，旧计时器不能清除后续任务。
-    const timer = setTimeout(() => queryClient.setQueryData([deviceId, 'composeAction'], current => current?.taskID === task.taskID ? null : current), 3000)
-    return () => clearTimeout(timer)
-  }, [deviceId, task?.taskID, progress?.isDone, progress?.status, queryClient])
   useEffect(() => {
     if (!initialTarget || !data || isFetching || openedTarget.current === initialTarget) return
     // 等待项目刷新后再定位；旧节点没有工作目录时，不能用同名项目替代容器的实际归属。
@@ -220,9 +215,11 @@ export function Compose({ onDirty, initialTarget, onOpenContainers }) {
     try { await fn(); await queryClient.invalidateQueries({ queryKey: [deviceId, 'tasks'] }) } catch (e) { setFailure(e.message) } finally { setBusy(false) }
   }
   const action = async (name, target = project, selectedServices = services) => {
-    const result = await managementAPI.composeAction(target.id, name, selectedServices)
-    const next = { taskID: result.taskID, projectId: target.id, action: name }
-    queryClient.setQueryData([deviceId, 'composeAction'], next)
+    try {
+      await submitOperation(projectResource(target), name, () => managementAPI.composeAction(target.id, name, selectedServices))
+    } catch {
+      // 提交失败已保存在所属对象的任务中，避免编辑窗口再显示相同错误。
+    }
   }
   const viewContainers = (target, serviceName = '') => onOpenContainers({
     projectName: target.name, directory: target.directory, serviceName,
@@ -240,11 +237,11 @@ export function Compose({ onDirty, initialTarget, onOpenContainers }) {
     if (target.id === projectId && dirty) { setFailure('请先保存文件'); return }
     if (['deploy', 'update', 'stop', 'restart'].includes(name) && !await confirm({
       title: `${actionLabels[name]}项目`,
-      message: `${actionLabels[name]} ${target.name}${selectedServices.length ? ` 的 ${selectedServices.join('、')}` : ' 的全部服务'}？${['deploy', 'update'].includes(name) ? '将应用已保存的配置；卷内数据无法回退。' : ''}`,
+      message: `${actionLabels[name]} ${target.name}${selectedServices.length ? ` 的 ${selectedServices.join('、')}` : ' 的全部服务'}？${['deploy', 'update'].includes(name) ? '将应用已保存的配置；所选范围内已停止的服务可能被启动，卷内数据无法回退。' : ''}`,
       confirmText: actionLabels[name],
       danger: name === 'stop',
     })) return
-    act(() => action(name, target, selectedServices))
+    await action(name, target, selectedServices)
   }
   const importProject = async event => {
     event.preventDefault()
@@ -309,27 +306,35 @@ export function Compose({ onDirty, initialTarget, onOpenContainers }) {
             const { running, total, status } = getProjectState(item)
             const cardActions = running ? [['stop', Square], ['restart', RotateCcw], ['update', Upload]] : [['start', Play], ['update', Upload]]
             const statusLabel = running ? `${running < total ? '部分运行' : '运行中'} ${running}/${total}` : '未运行'
-            const currentTask = task?.projectId === item.id
-            const updating = currentTask && taskRunning
+            const cardTask = getTask(projectResource(item))
+            const currentTask = !!cardTask
+            const showTaskStatus = currentTask && (!cardTask.isDone || cardTask.status === 'succeeded')
+            const progress = cardTask
+            const taskRunning = !!cardTask && !cardTask.isDone
+            const updating = taskRunning
+            const progressError = updating && taskReadError
+            const taskStatus = progressError ? 'unavailable' : cardTask?.status || 'running'
+            const taskMessage = progressError ? '进度暂不可用，请刷新进度' : cardTask?.message
+            const taskLabel = updating ? `${actionProgressLabels[cardTask.action] || '处理中'}${cardTask.percentage > 0 ? ` ${Math.round(cardTask.percentage)}%` : ''}` : actionResultLabels[cardTask?.status] || '操作结束'
             const haveUpdate = hasProjectUpdate(item)
             return <article key={item.id} aria-label={`项目 ${item.name}`} className="card group relative overflow-hidden hover:shadow-lg hover:border-primary-300 dark:hover:border-primary-600 rounded-2xl p-4 min-w-0">
               {haveUpdate && <UpdateBadge />}
-              <button type="button" aria-label={`编辑项目 ${item.name}`} disabled={busy} onClick={() => selectProject(item.id)} className="flex items-center gap-3 w-full min-w-0 text-left rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 disabled:opacity-50">
+              <button type="button" aria-label={`编辑项目 ${item.name}`} disabled={busy && projectId === item.id} onClick={() => selectProject(item.id)} className="flex items-center gap-3 w-full min-w-0 text-left rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 disabled:opacity-50">
                 <span className="h-12 w-12 bg-gradient-to-r from-blue-500 to-purple-600 rounded-xl flex items-center justify-center shadow-sm flex-shrink-0"><Boxes className="h-6 w-6 text-white" /></span>
                 <span className={cn('w-1 h-8 rounded-full flex-shrink-0', status === 'error' || (running && running < total) ? 'bg-yellow-500' : running ? 'bg-green-500' : 'bg-red-500')} />
                 <span className="flex-1 min-w-0">
                   <span className="block font-semibold text-base text-gray-900 dark:text-white truncate group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors" title={item.name}>{item.name}</span>
                   <span className="block text-xs text-gray-500 dark:text-gray-400 truncate mt-0.5" title={item.directory}>{item.directory}</span>
-                  <span role={currentTask ? 'status' : undefined} className={cn('flex items-center gap-1 text-xs mt-1 h-5', currentTask ? actionStatusColors[taskStatus] : item.error ? 'text-amber-600 dark:text-amber-400' : 'text-gray-500 dark:text-gray-400')} title={currentTask ? taskMessage : item.error}>
+                  <span role={showTaskStatus ? 'status' : undefined} className={cn('flex items-center gap-1 text-xs mt-1 h-5', showTaskStatus ? actionStatusColors[taskStatus] : item.error ? 'text-amber-600 dark:text-amber-400' : 'text-gray-500 dark:text-gray-400')} title={showTaskStatus ? taskMessage : item.error}>
                     {updating && !progressError && <RefreshCw className="h-3 w-3 animate-spin flex-shrink-0" />}
-                    <span className="truncate">{currentTask ? updating ? taskMessage : taskLabel : item.error ? '配置异常' : `${statusLabel} · ${item.files.length} 个文件`}</span>
+                    <span className="truncate">{showTaskStatus ? updating ? taskMessage : taskLabel : item.error ? '配置异常' : `${statusLabel} · ${item.files.length} 个文件`}</span>
                   </span>
                 </span>
               </button>
               <div className="card-actions flex gap-1 mt-3 pt-3 border-t border-gray-100 dark:border-gray-700/50">
                 {updating ? progressError ? <button type="button" className={cn(cardActionClass, 'text-primary-600 dark:text-primary-400')} disabled={fetchingProgress} onClick={() => refreshProgress()}><RefreshCw className={cn('h-4 w-4', fetchingProgress && 'animate-spin')} />刷新进度</button> : <div className="flex-1 flex items-center justify-center gap-2 px-1 py-1.5 bg-primary-50 dark:bg-primary-900/20 rounded-lg border border-primary-200 dark:border-primary-800 whitespace-nowrap text-xs font-medium text-primary-600 dark:text-primary-400">
                   <RefreshCw className="h-4 w-4 animate-spin flex-shrink-0" /><span>{taskLabel}</span>
-                </div> : cardActions.map(([name, Icon]) => <button key={name} type="button" title={`${name === 'update' ? '更新' : actionLabels[name]} ${item.name}`} disabled={mutating || !!item.error || !info?.capabilities.compose} className={cn(cardActionClass, cardActionColors[name])} onClick={() => requestAction(name, item, [])}><Icon className="h-4 w-4" /><span>{name === 'update' ? '更新' : actionLabels[name]}</span></button>)}
+                </div> : cardActions.map(([name, Icon]) => <button key={name} type="button" title={`${name === 'update' ? '更新' : actionLabels[name]} ${item.name}`} disabled={updating || (busy && projectId === item.id) || !!item.error || !info?.capabilities.compose} className={cn(cardActionClass, cardActionColors[name])} onClick={() => requestAction(name, item, [])}><Icon className="h-4 w-4" /><span>{name === 'update' ? '更新' : actionLabels[name]}</span></button>)}
                 <button type="button" aria-label={`查看 ${item.name} 的容器`} title="查看容器" className={cn(cardActionClass, 'text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700')} onClick={() => viewContainers(item)}><Server className="h-4 w-4" /><span>容器</span></button>
               </div>
               {currentTask && progress?.isDone && progress.status !== 'succeeded' && <p role="alert" className={cn('mt-3 text-xs whitespace-pre-wrap break-words', actionStatusColors[taskStatus])}>{progress.message}</p>}

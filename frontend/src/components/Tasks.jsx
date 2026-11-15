@@ -18,6 +18,7 @@ function TaskDetails({ task }) {
     {!task.isDone && <div role="progressbar" aria-label="执行进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={task.percentage} className="h-1.5 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden"><div className="h-full bg-primary-500 transition-all" style={{ width: `${task.percentage}%` }} /></div>}
     {task.message && <p className="text-sm whitespace-pre-wrap break-words">{task.message}</p>}
     {task.detailMsg && task.detailMsg !== task.message && <pre className="p-3 rounded-lg bg-gray-50 dark:bg-gray-900 text-xs text-gray-600 dark:text-gray-400 whitespace-pre-wrap break-words">{task.detailMsg}</pre>}
+    {task.cleanup && !task.message?.includes(task.cleanup) && <p className="text-xs text-gray-500 dark:text-gray-400 whitespace-pre-wrap break-words">{task.cleanup}</p>}
   </div>
 }
 

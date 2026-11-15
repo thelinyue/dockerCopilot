@@ -26,15 +26,17 @@ func NewUpdateProgramLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Upd
 
 func (l *UpdateProgramLogic) UpdateProgram() (resp *types.Resp, err error) {
 	resp = &types.Resp{}
-	taskID, err := l.svcCtx.RunTask("更新 DockerCopilot 程序", func(id string) error {
+	taskID, err := l.svcCtx.RunTask("更新 DockerCopilot 程序", svc.OperationScope{}, "program-update", func(id string) error {
 		if err := utiles.UpdateProgram(l.svcCtx); err != nil {
 			return err
 		}
-		go func() { time.Sleep(10 * time.Second); l.svcCtx.Operation.Lock(); os.Exit(1) }()
+		// 任务结束后仍拒绝新的变更，避免重启打断刚提交的任务。
+		l.svcCtx.SetRestarting()
+		go func() { time.Sleep(10 * time.Second); os.Exit(1) }()
 		return nil
 	})
 	if err != nil {
-		resp.Code = 500
+		resp.Code = 409
 		resp.Msg = err.Error()
 		resp.Data = map[string]interface{}{}
 		return resp, err
