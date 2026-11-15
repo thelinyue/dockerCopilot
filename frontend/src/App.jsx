@@ -3,15 +3,12 @@ import { Auth } from './components/Auth.jsx'
 import { Sidebar, MobileBottomNav } from './components/Header.jsx'
 import { Containers } from './components/Containers.jsx'
 import { Images } from './components/Images.jsx'
-import { Icons } from './components/Icons.jsx'
-import { About } from './components/About.jsx'
+import { Settings } from './components/Settings.jsx'
 import { ThemeProvider } from './hooks/useTheme.jsx'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cn } from './utils/cn.js'
 
 import { DeviceProvider } from './hooks/useDevice.jsx'
-import { Devices } from './components/Devices.jsx'
-import { Automation } from './components/Automation.jsx'
 import { Compose } from './components/Compose.jsx'
 import { ConfirmationProvider, useConfirmation } from './components/ManagementUI.jsx'
 
@@ -31,6 +28,7 @@ function AppContent() {
   const [deviceId, setDeviceId] = useState(() => localStorage.getItem('docker_copilot_device') || 'local')
   const [dirty, setDirty] = useState(false)
   const [activeTab, setActiveTab] = useState('#compose')
+  const [settingsSection, setSettingsSection] = useState('automation')
   const [containerScope, setContainerScope] = useState(null)
   const [composeTarget, setComposeTarget] = useState(null)
   const [windowWidth, setWindowWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1024)
@@ -122,13 +120,15 @@ function AppContent() {
 
   const handleLogin = () => {
     setActiveTab('#compose')
+    setSettingsSection('automation')
+    setDirty(false)
     setIsAuthenticated(true)
     // 触发自定义事件通知其他组件认证状态已更新
     window.dispatchEvent(new CustomEvent('authChange', { detail: { authenticated: true } }))
   }
 
   const handleLogout = async () => {
-    if (dirty && !await confirm({ title: '退出登录', message: '项目文件有未保存的修改，退出后将丢失。', confirmText: '退出登录' })) return
+    if (dirty && !await confirm({ title: '退出登录', message: `${activeTab === '#settings' ? '自动更新设置' : '项目文件'}有未保存的修改，退出后将丢失。`, confirmText: '放弃修改' })) return
     setDirty(false)
     setContainerScope(null)
     setComposeTarget(null)
@@ -143,11 +143,19 @@ function AppContent() {
       if (tab === '#containers') setContainerScope(null)
       return true
     }
-    if (dirty && !await confirm({ title: '离开当前页面', message: '项目文件有未保存的修改，离开后将丢失。', confirmText: '放弃修改' })) return false
+    if (dirty && !await confirm({ title: '离开当前页面', message: `${activeTab === '#settings' ? '自动更新设置' : '项目文件'}有未保存的修改，离开后将丢失。`, confirmText: '放弃修改' })) return false
     setDirty(false)
     setContainerScope(null)
     setComposeTarget(null)
     setActiveTab(tab)
+    return true
+  }
+
+  const handleSettingsSectionChange = async (section) => {
+    if (section === settingsSection) return true
+    if (dirty && !await confirm({ title: '切换设置分类', message: '自动更新设置有未保存的修改，切换后将丢失。', confirmText: '放弃修改' })) return false
+    setDirty(false)
+    setSettingsSection(section)
     return true
   }
 
@@ -161,7 +169,7 @@ function AppContent() {
 
   const handleDeviceChange = async (id) => {
     if (id === deviceId) return
-    if (dirty && !await confirm({ title: '切换设备', message: '项目文件有未保存的修改，切换后将丢失。', confirmText: '放弃并切换' })) return
+    if (dirty && !await confirm({ title: '切换设备', message: `${activeTab === '#settings' ? '自动更新设置' : '项目文件'}有未保存的修改，切换后将丢失。`, confirmText: '放弃修改' })) return
     setDirty(false)
     setContainerScope(null)
     setComposeTarget(null)
@@ -182,16 +190,10 @@ function AppContent() {
         return <Containers scope={containerScope} onClearScope={() => setContainerScope(null)} onOpenCompose={openCompose} />
       case '#images':
         return <Images />
-      case '#icons':
-        return <Icons />
       case '#compose':
         return <Compose onDirty={setDirty} initialTarget={composeTarget} onOpenContainers={openContainers} />
-      case '#automation':
-        return <Automation />
-      case '#devices':
-        return <Devices />
-      case '#about':
-        return <About />
+      case '#settings':
+        return <Settings section={settingsSection} onSectionChange={handleSettingsSectionChange} onDirty={setDirty} />
       default:
         return <Compose onDirty={setDirty} initialTarget={composeTarget} onOpenContainers={openContainers} />
     }

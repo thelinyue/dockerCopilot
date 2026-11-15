@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Monitor, Plus, RefreshCw, Trash2, Pencil, Plug, Save } from 'lucide-react'
 import { deviceAPI } from '../api/client.js'
 import { cn } from '../utils/cn.js'
-import { Dialog, Notice, PageHeader, useConfirmation } from './ManagementUI.jsx'
+import { Dialog, Notice, SettingsPanel, useConfirmation } from './ManagementUI.jsx'
 
 export function DeviceSelector({ deviceId, onChange, compact = false }) {
   const { data: devices = [], error } = useQuery({ queryKey: ['devices'], queryFn: deviceAPI.list })
@@ -23,7 +23,7 @@ export function DeviceSelector({ deviceId, onChange, compact = false }) {
   )
 }
 
-export function Devices() {
+export function Devices({ layout }) {
   const queryClient = useQueryClient()
   const confirm = useConfirmation()
   const { data: devices = [], error, isLoading, isFetching, refetch } = useQuery({ queryKey: ['devices'], queryFn: deviceAPI.list })
@@ -66,11 +66,10 @@ export function Devices() {
     })
   }
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 text-gray-900 dark:text-gray-100">
-      <PageHeader title="设备管理">
+    <SettingsPanel {...layout} actions={<>
         <button type="button" className="btn-secondary gap-2 disabled:opacity-50" disabled={isFetching || busy} onClick={() => refetch()}><RefreshCw className={cn('h-4 w-4', isFetching && 'animate-spin')} />刷新</button>
         <button type="button" className="btn-primary gap-2" onClick={() => edit()}><Plus className="h-4 w-4" />添加设备</button>
-      </PageHeader>
+      </>}>
       <div className="space-y-4">
         <Notice>{failure || error?.message}</Notice>
         <Notice type="warning" onClose={() => setWarning('')}>{warning}</Notice>
@@ -117,6 +116,6 @@ export function Devices() {
           </div>
         </form>
       </Dialog>}
-    </div>
+    </SettingsPanel>
   )
 }

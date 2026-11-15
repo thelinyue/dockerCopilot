@@ -5,8 +5,9 @@ import { cn } from '../utils/cn.js'
 import { builtInImageLogos, getSupportedImageNames } from '../config/imageLogos.js'
 import { useQuery } from '@tanstack/react-query'
 import { useDeviceAPI } from '../hooks/useDevice.jsx'
+import { SettingsPanel } from './ManagementUI.jsx'
 
-export function Icons() {
+export function Icons({ layout }) {
   const { deviceId, imageAPI, managementAPI } = useDeviceAPI()
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('all')
@@ -119,19 +120,15 @@ export function Icons() {
   const categories = ['all', 'custom', 'builtin']
 
   return (
-    <div className="max-w-7xl mx-auto">
-      {/* 页面头部 */}
-      <div className="px-4 sm:px-6 py-4">
-        <h2 className="text-2xl font-bold text-gray-900 dark:text-white">图标库</h2>
-      </div>
-
+    <SettingsPanel {...layout}>
       {/* 搜索和过滤 */}
-      <div className="px-4 sm:px-6 py-4 space-y-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
+      <div className="card p-4 space-y-3">
         {/* 搜索框 */}
         <div className="relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
           <input
             type="text"
+            aria-label="搜索图标名称"
             placeholder="搜索图标名称..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
@@ -142,6 +139,7 @@ export function Icons() {
         {/* 分类过滤和统计 */}
         <div className="flex flex-col sm:flex-row sm:items-center gap-4">
           <select
+            aria-label="图标分类"
             value={selectedCategory}
             onChange={(e) => setSelectedCategory(e.target.value)}
             className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent"
@@ -161,6 +159,7 @@ export function Icons() {
             </span>
             {favorites.length > 0 && (
               <button
+                aria-label="收藏图标"
                 onClick={() => setSelectedCategory('favorites')}
                 className={cn(
                   "px-3 py-2 text-sm rounded-lg transition-colors flex items-center gap-1.5",
@@ -178,7 +177,7 @@ export function Icons() {
       </div>
 
       {/* 图标网格 */}
-      <div className="px-4 sm:px-6 py-4 space-y-8">
+      <div className="py-4 space-y-6">
 
         {/* 本地图标库部分 */}
         {filteredCustomIcons.length > 0 && (
@@ -206,11 +205,12 @@ export function Icons() {
                         }}
                       />
                       <button
+                        aria-label={`${favorites.includes(name) ? '取消收藏' : '收藏'} ${name}`}
                         onClick={(e) => {
                           e.stopPropagation()
                           toggleFavorite(name)
                         }}
-                        className="absolute -top-1 -right-1 p-1.5 rounded-full bg-white dark:bg-gray-800 shadow-md opacity-0 group-hover:opacity-100 transition-opacity"
+                        className="btn-icon-secondary absolute -top-1 -right-1 rounded-full bg-white dark:bg-gray-800 shadow-md sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"
                       >
                         <Star
                           className={cn(
@@ -229,13 +229,13 @@ export function Icons() {
                       </p>
                     </div>
 
-                    <div className="flex items-center justify-center gap-2 mt-3 pt-3 border-t border-gray-100 dark:border-gray-700 w-full opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="flex items-center justify-center gap-2 mt-3 pt-3 border-t border-gray-100 dark:border-gray-700 w-full sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 transition-opacity">
                       <button
                         onClick={(e) => {
                           e.stopPropagation()
                           copyToClipboard(url, name)
                         }}
-                        className="p-1 text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 rounded transition-colors"
+                        className="btn-icon-secondary"
                         title={url.startsWith('/src/config/image/') ? '复制图像数据链接' : '复制链接'}
                       >
                         {copiedIcon === name ? (
@@ -249,7 +249,7 @@ export function Icons() {
                           e.stopPropagation()
                           openIcon(url)
                         }}
-                        className="p-1 text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 rounded transition-colors"
+                        className="btn-icon-secondary"
                         title="查看原图"
                       >
                         <Eye className="h-4 w-4" />
@@ -288,11 +288,12 @@ export function Icons() {
                         }}
                       />
                       <button
+                        aria-label={`${favorites.includes(name) ? '取消收藏' : '收藏'} ${name}`}
                         onClick={(e) => {
                           e.stopPropagation()
                           toggleFavorite(name)
                         }}
-                        className="absolute -top-1 -right-1 p-1.5 rounded-full bg-white dark:bg-gray-800 shadow-md opacity-0 group-hover:opacity-100 transition-opacity"
+                        className="btn-icon-secondary absolute -top-1 -right-1 rounded-full bg-white dark:bg-gray-800 shadow-md sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"
                       >
                         <Star
                           className={cn(
@@ -311,13 +312,13 @@ export function Icons() {
                       </p>
                     </div>
 
-                    <div className="flex items-center justify-center gap-2 mt-3 pt-3 border-t border-gray-100 dark:border-gray-700 w-full opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="flex items-center justify-center gap-2 mt-3 pt-3 border-t border-gray-100 dark:border-gray-700 w-full sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 transition-opacity">
                       <button
                         onClick={(e) => {
                           e.stopPropagation()
                           copyToClipboard(url, name)
                         }}
-                        className="p-1 text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 rounded transition-colors"
+                        className="btn-icon-secondary"
                         title={url.startsWith('/src/config/image/') ? '复制图像数据链接' : '复制链接'}
                       >
                         {copiedIcon === name ? (
@@ -331,7 +332,7 @@ export function Icons() {
                           e.stopPropagation()
                           openIcon(url)
                         }}
-                        className="p-1 text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 rounded transition-colors"
+                        className="btn-icon-secondary"
                         title="查看原图"
                       >
                         <Eye className="h-4 w-4" />
@@ -362,7 +363,7 @@ export function Icons() {
       {/* 图标详情弹窗 */}
       {selectedIcon && (
         <div className="modal-viewport bg-black bg-opacity-50 z-50">
-          <div className="modal-panel bg-white dark:bg-gray-800 rounded-2xl shadow-xl max-w-2xl w-full">
+          <div role="dialog" aria-modal="true" aria-label="图标详情" className="modal-panel bg-white dark:bg-gray-800 rounded-2xl shadow-xl max-w-2xl w-full">
             <div className="p-6">
               <div className="flex justify-between items-start mb-4">
                 <h3 className="text-xl font-semibold text-gray-900 dark:text-white">
@@ -370,7 +371,8 @@ export function Icons() {
                 </h3>
                 <button
                   onClick={() => setSelectedIcon(null)}
-                  className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 rounded-lg"
+                  aria-label="关闭图标详情"
+                  className="btn-icon-secondary"
                 >
                   <X className="h-6 w-6" />
                 </button>
@@ -407,7 +409,7 @@ export function Icons() {
                     />
                     <button
                       onClick={() => copyToClipboard(selectedIcon.url, selectedIcon.name)}
-                      className="px-4 py-3 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors flex items-center gap-2 flex-shrink-0"
+                      className="btn-primary px-4 py-3 gap-2 flex-shrink-0"
                     >
                       {copiedIcon === selectedIcon.name ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
                       {copiedIcon === selectedIcon.name ? '已复制' : '复制'}
@@ -418,7 +420,7 @@ export function Icons() {
                 <div className="flex gap-3 pt-4">
                   <button
                     onClick={() => openIcon(selectedIcon.url)}
-                    className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                    className="btn-secondary flex-1"
                   >
                     在新窗口打开
                   </button>
@@ -428,7 +430,7 @@ export function Icons() {
                       setSelectedIcon(null)
                     }}
                     className={cn(
-                      "flex-1 px-4 py-2 rounded-lg transition-colors",
+                      "btn flex-1",
                       favorites.includes(selectedIcon.name)
                         ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200 hover:bg-yellow-200 dark:hover:bg-yellow-800"
                         : "bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600"
@@ -442,6 +444,6 @@ export function Icons() {
           </div>
         </div>
       )}
-    </div>
+    </SettingsPanel>
   )
 }

@@ -160,10 +160,10 @@ func (m *Manager) Routes(server *rest.Server) {
 		path, name string
 		fn         func(context.Context, string) error
 		job        string
-	}{{"/checks", "手动检测", m.Check, "check"}, {"/auto-update", "手动执行自动更新规则", m.AutoUpdate, "auto-update"}} {
+	}{{"/checks", "手动检测", m.Check, "check"}, {"/auto-update", "手动检测并更新", m.AutoUpdate, "auto-update"}} {
 		item := item
 		add("POST", item.path, func(w http.ResponseWriter, r *http.Request) {
-			id, err := m.Context.RunTask(item.name, svc.OperationScope{Job: item.job}, item.job, func(id string) error {
+			id, err := m.Context.RunTask(item.name, svc.OperationScope{Job: "automation"}, item.job, func(id string) error {
 				ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
 				defer cancel()
 				return item.fn(ctx, id)

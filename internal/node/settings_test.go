@@ -12,7 +12,7 @@ func TestSettingsPersistAndValidate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.Get().AutoUpdate || s.Get().CheckCron != "30 * * * *" {
+	if s.Get().AutoUpdate || s.Get().CheckCron != "30 * * * *" || s.Get().UpdateCron != s.Get().CheckCron {
 		t.Fatal("unsafe defaults")
 	}
 	t.Setenv("HTTP_PROXY", "http://different.example:7890")
@@ -53,5 +53,52 @@ func TestSettingsPersistAndValidate(t *testing.T) {
 func TestProxyRedaction(t *testing.T) {
 	if got := RedactProxy("http://user:secret@proxy:7890"); got != "http://user:%2A%2A%2A%2A%2A%2A%2A%2A@proxy:7890" {
 		t.Fatal(got)
+	}
+}
+
+func TestUnifiedScheduleMigratesLegacySettingsWithoutIncreasingUpdateFrequency(t *testing.T) {
+	for _, auto := range []bool{false, true} {
+		t.Run(map[bool]string{false: "只检测", true: "自动更新"}[auto], func(t *testing.T) {
+			dir := t.TempDir()
+			legacy := Settings{CheckCron: "30 * * * *", UpdateCron: "0 3 * * *", AutoUpdate: auto, StartupCheck: true, HTTPProxy: "http://user:secret@proxy:7890", ExcludedContainers: []string{"stopped"}, ExcludedServices: []string{"project/app"}}
+			if err := WriteJSON(filepath.Join(dir, "settings.json"), legacy); err != nil {
+				t.Fatal(err)
+			}
+			store, err := OpenSettings(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := legacy.CheckCron
+			if auto {
+				want = legacy.UpdateCron
+			}
+			if got := store.Get(); got.ScheduleCron() != want || got.CheckCron == got.UpdateCron {
+				t.Fatal("旧配置未按原启用模式选择频率，或读取时就被覆盖", got)
+			}
+			v := store.Get()
+			v.AutoUpdate = !auto
+			if err := store.Save(v); err != nil {
+				t.Fatal(err)
+			}
+			reopened, err := OpenSettings(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := reopened.Get()
+			if got.CheckCron != want || got.UpdateCron != want || got.AutoUpdate != !auto || !got.StartupCheck || got.HTTPProxy != legacy.HTTPProxy || len(got.ExcludedContainers) != 1 || len(got.ExcludedServices) != 1 {
+				t.Fatal("切换模式改变了频率或丢失已有设置", got)
+			}
+		})
+	}
+}
+
+func TestLegacyEnabledUpdateWithoutCronKeepsDailyDefault(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"autoUpdate":true,"checkCron":"30 * * * *"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenSettings(dir)
+	if err != nil || store.Get().ScheduleCron() != "0 3 * * *" {
+		t.Fatal("缺少旧字段的配置扩大了自动更新频率", err)
 	}
 }

@@ -24,7 +24,7 @@ func TestAutoUpdateSkipsBusyStoppedAndMixedServicesButContinues(t *testing.T) {
 	t.Setenv("COMPOSE_ROOT", root)
 	t.Setenv("DATA_DIR", t.TempDir())
 	objects := map[string]docker.ContainerJSON{}
-	for _, id := range []string{"busy", "stopped", "healthy", "partial-running", "partial-stopped"} {
+	for _, id := range []string{"busy", "stopped", "excluded", "healthy", "partial-running", "partial-stopped"} {
 		labels := map[string]string{}
 		running := id != "stopped" && id != "partial-stopped"
 		if strings.HasPrefix(id, "partial-") {
@@ -72,6 +72,11 @@ func TestAutoUpdateSkipsBusyStoppedAndMixedServicesButContinues(t *testing.T) {
 	cli, _ := client.NewClientWithOpts(client.WithHost(daemon.URL), client.WithVersion("1.47"))
 	defer cli.Close()
 	settings, _ := node.OpenSettings(node.DataDir())
+	v := settings.Get()
+	v.ExcludedContainers = []string{"excluded"}
+	if err := settings.Save(v); err != nil {
+		t.Fatal(err)
+	}
 	s := &svc.ServiceContext{DockerClient: cli, Settings: settings, HubImageInfo: module.NewImageCheck()}
 	m := New(s)
 	s.UpdateProgress("auto", svc.TaskProgress{Name: "auto"})
@@ -85,14 +90,16 @@ func TestAutoUpdateSkipsBusyStoppedAndMixedServicesButContinues(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, _ := s.GetProgress("auto")
-	if !strings.Contains(p.DetailMsg, "busy: 已跳过") || !strings.Contains(p.DetailMsg, "/healthy: 已是最新") || !strings.Contains(p.DetailMsg, "包含停止副本") || p.Resource != nil {
+	if !strings.Contains(p.DetailMsg, "busy: 已跳过") || !strings.Contains(p.DetailMsg, "/excluded: 已跳过") || !strings.Contains(p.DetailMsg, "/healthy: 已是最新") || !strings.Contains(p.DetailMsg, "包含停止副本") || p.Resource != nil {
 		t.Fatal(p)
 	}
 	if mutations.Load() != 0 || images.Load() != 1 {
-		t.Fatal("停止或忙碌对象仍被检测/变更，或后续运行对象未处理", mutations.Load(), images.Load())
+		t.Fatal("跳过对象被变更、相同镜像被重复检测，或后续运行对象未处理", mutations.Load(), images.Load())
 	}
-	if result, _ := s.HubImageInfo.Get("stopped"); !result.NeedUpdate {
-		t.Fatal("停止容器的更新提示被清除")
+	for _, id := range []string{"stopped", "excluded"} {
+		if result, ok := s.HubImageInfo.Get(id); !ok || result.CheckedAt.IsZero() || result.NeedUpdate {
+			t.Fatal("统一任务没有刷新停止或排除容器的检测结果", id, result)
+		}
 	}
 	if err := m.Check(context.Background(), "check"); err != nil {
 		t.Fatal(err)
@@ -123,7 +130,9 @@ func TestLateCheckDoesNotRestoreReplacedContainerResult(t *testing.T) {
 func TestAutoUpdateContinuesAfterOneUpdateFails(t *testing.T) {
 	t.Setenv("COMPOSE_ROOT", t.TempDir())
 	t.Setenv("DATA_DIR", t.TempDir())
+	var registryChecks atomic.Int32
 	registry := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		registryChecks.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"config":{"digest":"sha256:new"}}`))
 	}))
@@ -175,6 +184,9 @@ func TestAutoUpdateContinuesAfterOneUpdateFails(t *testing.T) {
 	if err == nil || !strings.Contains(p.DetailMsg, "/failed: 拉取镜像失败") || !strings.Contains(p.DetailMsg, "/healthy: 已更新") || !updated.Load() || pulls.Load() != 2 {
 		t.Fatal("一项更新失败阻止了后续对象，或最终结果没有汇总失败", err, p, pulls.Load())
 	}
+	if registryChecks.Load() != 1 {
+		t.Fatal("同一次任务重复检测了相同镜像目标", registryChecks.Load())
+	}
 	release, err := s.Acquire(svc.OperationScope{})
 	if err != nil {
 		t.Fatal("更新结束后仍占用节点", err)
@@ -182,7 +194,7 @@ func TestAutoUpdateContinuesAfterOneUpdateFails(t *testing.T) {
 	release()
 }
 
-func TestAutoUpdatePartiallyRunningProjectChecksOnlyEligibleService(t *testing.T) {
+func TestAutoUpdatePartiallyRunningProjectDetectsAllAndSkipsStoppedServices(t *testing.T) {
 	if os.Getenv("DOCKERCOPILOT_COMPOSE_TEST") != "1" {
 		t.Skip("设置 DOCKERCOPILOT_COMPOSE_TEST=1 后使用官方 Compose 验证部分运行项目")
 	}
@@ -226,9 +238,6 @@ func TestAutoUpdatePartiallyRunningProjectChecksOnlyEligibleService(t *testing.T
 		default:
 			parts := strings.Split(r.URL.Path, "/")
 			id := parts[len(parts)-2]
-			if id != "active" {
-				t.Error("自动更新检查了停止服务或含停止副本的服务", id)
-			}
 			json.NewEncoder(w).Encode(objects[id])
 		}
 	}))

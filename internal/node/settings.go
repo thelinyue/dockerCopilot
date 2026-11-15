@@ -23,6 +23,14 @@ type Settings struct {
 	HTTPSProxy         string   `json:"httpsProxy"`
 }
 
+// 旧配置保留两个 Cron 字段，合并时优先保留原自动更新时间，避免扩大更新频率。
+func (s Settings) ScheduleCron() string {
+	if s.AutoUpdate {
+		return s.UpdateCron
+	}
+	return s.CheckCron
+}
+
 var CronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 
 type Store struct {
@@ -53,6 +61,10 @@ func OpenSettings(dir string) (*Store, error) {
 	}
 	if err != nil {
 		return nil, fmt.Errorf("读取节点设置失败，请检查 %s: %w", s.path, err)
+	}
+	if missing {
+		// 新安装只有一个频率；旧文件缺少字段时仍沿用旧版默认值。
+		s.settings.UpdateCron = s.settings.CheckCron
 	}
 	if err = Validate(s.settings); err != nil {
 		return nil, err
@@ -101,6 +113,12 @@ func (s *Store) Save(v Settings) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	cron := v.ScheduleCron()
+	// 仅切换自动更新开关时保持原频率；保存后两个兼容字段表示同一个计划。
+	if v.CheckCron == s.settings.CheckCron && v.UpdateCron == s.settings.UpdateCron {
+		cron = s.settings.ScheduleCron()
+	}
+	v.CheckCron, v.UpdateCron = cron, cron
 	if err := WriteJSON(s.path, v); err != nil {
 		return err
 	}

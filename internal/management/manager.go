@@ -21,12 +21,11 @@ import (
 )
 
 type Manager struct {
-	Context   *svc.ServiceContext
-	mu        sync.Mutex
-	cron      *cron.Cron
-	checkJob  cron.EntryID
-	updateJob cron.EntryID
-	parser    *token.TokenParser
+	Context     *svc.ServiceContext
+	mu          sync.Mutex
+	cron        *cron.Cron
+	scheduleJob cron.EntryID
+	parser      *token.TokenParser
 }
 
 func New(s *svc.ServiceContext) *Manager {
@@ -41,7 +40,7 @@ func (m *Manager) Start() {
 }
 func (m *Manager) Stop() { <-m.cron.Stop().Done() }
 func (m *Manager) launch(name, job string, fn func(context.Context, string) error) {
-	_, err := m.Context.RunTask(name, svc.OperationScope{Job: job}, job, func(id string) error {
+	_, err := m.Context.RunTask(name, svc.OperationScope{Job: "automation"}, job, func(id string) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
 		defer cancel()
 		return fn(ctx, id)
@@ -54,17 +53,25 @@ func (m *Manager) ReloadSchedules() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	s := m.Context.Settings.Get()
-	m.cron.Remove(m.checkJob)
-	m.cron.Remove(m.updateJob)
-	m.checkJob, _ = m.cron.AddFunc(s.CheckCron, func() { m.launch("定时检测", "check", m.Check) })
-	if s.AutoUpdate {
-		m.updateJob, _ = m.cron.AddFunc(s.UpdateCron, func() { m.launch("定时自动更新", "auto-update", m.AutoUpdate) })
-	}
+	m.cron.Remove(m.scheduleJob)
+	m.scheduleJob, _ = m.cron.AddFunc(s.ScheduleCron(), func() {
+		if s.AutoUpdate {
+			m.launch("定时检测并更新", "auto-update", m.AutoUpdate)
+		} else {
+			m.launch("定时检测", "check", m.Check)
+		}
+	})
 }
 func (m *Manager) NextRuns() map[string]any {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return map[string]any{"check": m.cron.Entry(m.checkJob).Next, "update": m.cron.Entry(m.updateJob).Next, "timezone": time.Local.String()}
+	next := m.cron.Entry(m.scheduleJob).Next
+	var update time.Time
+	if m.Context.Settings.Get().AutoUpdate {
+		update = next
+	}
+	// schedule 同时表明当前节点采用统一调度；旧界面仍可读取 check/update。
+	return map[string]any{"schedule": next, "check": next, "update": update, "timezone": time.Local.String()}
 }
 func (m *Manager) message(id string, percent int, text string) {
 	p, _ := m.Context.GetProgress(id)
@@ -81,24 +88,61 @@ func isCopilot(v docker.ContainerJSON) bool {
 	return (len(hostname) >= 12 && strings.HasPrefix(v.ID, hostname)) || strings.Contains(strings.ToLower(v.Config.Image), "dockercopilot") || strings.Contains(strings.ToLower(v.Name), "dockercopilot")
 }
 
-func (m *Manager) checkContainer(ctx context.Context, v docker.ContainerJSON, imageRef string) (module.ImageCheckList, bool) {
-	result := module.ImageCheckList{CheckedAt: time.Now()}
-	local, _, err := m.Context.DockerClient.ImageInspectWithRaw(ctx, v.Image)
-	if err == nil {
-		client := module.RegistryClient(m.Context.Settings.Get())
-		defer client.CloseIdleConnections()
-		result.NeedUpdate, err = module.CheckReference(ctx, client, imageRef, v.Image, local.Os, local.Architecture, local.Variant)
+type checkRun struct {
+	images     map[string]module.ImageCheckList
+	containers map[string]docker.ContainerJSON
+	total      int
+	available  int
+	failed     int
+}
+
+func newCheckRun() *checkRun {
+	return &checkRun{images: map[string]module.ImageCheckList{}, containers: map[string]docker.ContainerJSON{}}
+}
+
+func (r *checkRun) summary() string {
+	return fmt.Sprintf("检测 %d 个容器，可更新 %d 个，无法确认 %d 个；具体原因见容器列表", r.total, r.available, r.failed)
+}
+
+func sameCheckContainer(before, after docker.ContainerJSON) bool {
+	return before.ContainerJSONBase != nil && after.ContainerJSONBase != nil && before.ID == after.ID &&
+		after.Image == before.Image && after.Name == before.Name && before.Config != nil && after.Config != nil && after.Config.Image == before.Config.Image
+}
+
+func (r *checkRun) unchanged(v docker.ContainerJSON) bool {
+	before, ok := r.containers[v.ID]
+	return ok && sameCheckContainer(before, v) && before.State != nil && v.State != nil && before.State.Running == v.State.Running
+}
+
+func (m *Manager) checkContainer(ctx context.Context, v docker.ContainerJSON, imageRef string, run *checkRun) (module.ImageCheckList, bool) {
+	// 本地镜像 ID 唯一对应其平台配置；仅复用本次任务内相同引用、镜像和平台的结果。
+	key := imageRef + "\n" + v.Image
+	result, ok := run.images[key]
+	if !ok {
+		result.CheckedAt = time.Now()
+		local, _, err := m.Context.DockerClient.ImageInspectWithRaw(ctx, v.Image)
+		if err == nil {
+			client := module.RegistryClient(m.Context.Settings.Get())
+			defer client.CloseIdleConnections()
+			result.NeedUpdate, err = module.CheckReference(ctx, client, imageRef, v.Image, local.Os, local.Architecture, local.Variant)
+		}
+		if err != nil {
+			result.Error = err.Error()
+		}
+		run.images[key] = result
 	}
-	if err != nil {
-		result.Error = err.Error()
+	if imageRef == v.Config.Image {
+		return result, m.storeCheck(ctx, v, result)
 	}
-	return result, m.storeCheck(ctx, v, result)
+	// 已保存 Compose 的目标可能不同于当前容器，不能把目标检测冒充当前镜像的列表提示。
+	after, err := m.Context.DockerClient.ContainerInspect(ctx, v.ID)
+	return result, err == nil && sameCheckContainer(v, after)
 }
 
 func (m *Manager) storeCheck(ctx context.Context, before docker.ContainerJSON, result module.ImageCheckList) bool {
 	// 检测不锁住对象；网络返回后确认仍是同一镜像，避免把替换前结果写回。
 	after, err := m.Context.DockerClient.ContainerInspect(ctx, before.ID)
-	if err == nil && after.Image == before.Image && after.Name == before.Name && after.Config != nil && after.Config.Image == before.Config.Image {
+	if err == nil && sameCheckContainer(before, after) {
 		m.Context.HubImageInfo.Set(before.ID, result)
 		return true
 	}
@@ -106,6 +150,17 @@ func (m *Manager) storeCheck(ctx context.Context, before docker.ContainerJSON, r
 }
 
 func (m *Manager) Check(ctx context.Context, id string) error {
+	run := newCheckRun()
+	if err := m.checkAll(ctx, id, run, 100); err != nil {
+		return err
+	}
+	if run.failed > 0 {
+		return fmt.Errorf("检测完成，%d 个容器无法确认更新，请查看容器列表中的原因", run.failed)
+	}
+	return nil
+}
+
+func (m *Manager) checkAll(ctx context.Context, id string, run *checkRun, progressEnd int) error {
 	list, err := m.Context.DockerClient.ContainerList(ctx, container.ListOptions{All: true})
 	if err != nil {
 		return fmt.Errorf("连接 Docker 失败，请检查 socket 挂载: %w", err)
@@ -115,8 +170,7 @@ func (m *Manager) Check(ctx context.Context, id string) error {
 		ids = append(ids, c.ID)
 	}
 	m.Context.HubImageInfo.Retain(ids)
-	failed, available := 0, 0
-	cache := map[string]module.ImageCheckList{}
+	run.total = len(list)
 	for i, c := range list {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -124,42 +178,30 @@ func (m *Manager) Check(ctx context.Context, id string) error {
 		v, err := m.Context.DockerClient.ContainerInspect(ctx, c.ID)
 		if err != nil {
 			if !errdefs.IsNotFound(err) {
-				failed++
+				run.failed++
 			}
 			continue
 		}
 		if v.Config == nil {
-			failed++
+			run.failed++
 			continue
 		}
-		key := v.Config.Image + "\n" + v.Image
-		result, ok := cache[key]
-		if !ok {
-			var current bool
-			result, current = m.checkContainer(ctx, v, v.Config.Image)
-			if !current {
-				continue
-			}
-			cache[key] = result
-		} else {
-			if !m.storeCheck(ctx, v, result) {
-				continue
-			}
+		result, current := m.checkContainer(ctx, v, v.Config.Image, run)
+		if !current {
+			continue
 		}
+		run.containers[v.ID] = v
 		if result.Error != "" {
-			failed++
+			run.failed++
 		}
 		if result.NeedUpdate {
-			available++
+			run.available++
 		}
-		m.message(id, (i+1)*100/len(list), fmt.Sprintf("已检测 %d/%d 个容器，可更新 %d 个，无法确认 %d 个", i+1, len(list), available, failed))
+		m.message(id, (i+1)*progressEnd/len(list), fmt.Sprintf("已检测 %d/%d 个容器，可更新 %d 个，无法确认 %d 个", i+1, len(list), run.available, run.failed))
 	}
 	p, _ := m.Context.GetProgress(id)
-	p.DetailMsg = fmt.Sprintf("检测 %d 个容器，可更新 %d 个，无法确认 %d 个；具体原因见容器列表", len(list), available, failed)
+	p.DetailMsg = run.summary()
 	m.Context.UpdateProgress(id, p)
-	if failed > 0 {
-		return fmt.Errorf("检测完成，%d 个容器无法确认更新，请查看容器列表中的原因", failed)
-	}
 	return nil
 }
 

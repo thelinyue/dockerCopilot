@@ -420,7 +420,7 @@ export function Containers({ scope, onClearScope, onOpenCompose }) {
 
   if (isLoading) {
     return (
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4">
+      <div className="max-w-7xl mx-auto px-2 sm:px-6 py-4">
         <div className="animate-pulse space-y-4">
           {[1, 2, 3].map(i => (
             <div key={i} className="card p-6">
@@ -439,7 +439,7 @@ export function Containers({ scope, onClearScope, onOpenCompose }) {
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4">
+    <div className="max-w-7xl mx-auto">
       <style>{`
         @keyframes shimmer {
           0% { background-position: -200% 0; }
@@ -501,7 +501,7 @@ export function Containers({ scope, onClearScope, onOpenCompose }) {
       )}
 
       {/* 页面标题和操作 */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 space-y-4 sm:space-y-0 pt-4 sm:pt-0">
+      <div className="px-2 sm:px-6 py-4 flex flex-col sm:flex-row justify-between items-start sm:items-center space-y-4 sm:space-y-0">
         <div>
           <h2 className="text-2xl font-bold text-gray-900 dark:text-white">容器管理</h2>
         </div>

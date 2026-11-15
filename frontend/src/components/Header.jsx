@@ -3,7 +3,7 @@ import {
   Box,
   LogOut,
   Server,
-  Info, Boxes, Settings, Network
+  Boxes, Settings
 } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { deviceAPI } from '../api/client.js'
@@ -13,6 +13,13 @@ import { UpdatePrompt } from './UpdatePrompt.jsx'
 import { cn } from '../utils/cn.js'
 import logoImg from '../assets/DockerCopilot-logo.png'
 import { useVersionCheck } from '../hooks/useVersionCheck.js'
+
+const navItems = [
+  { id: '#compose', label: '项目', icon: Boxes },
+  { id: '#containers', label: '容器', icon: Server },
+  { id: '#images', label: '镜像', icon: Box },
+  { id: '#settings', label: '设置', icon: Settings },
+]
 
 export function Sidebar({ activeTab, onTabChange, onLogout, isCollapsed = false, onToggleCollapse, windowWidth = 1024, deviceId, onDeviceChange }) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false)
@@ -69,24 +76,6 @@ export function Sidebar({ activeTab, onTabChange, onLogout, isCollapsed = false,
       onToggleCollapse()
     }
   }
-
-  const navItems = [
-    { id: '#compose', label: '项目', icon: Boxes },
-    {
-      id: '#containers',
-      label: '容器',
-      icon: Server,
-    },
-    {
-      id: '#images',
-      label: '镜像',
-      icon: Box,
-    },
-    { id: '#automation', label: '自动更新', icon: Settings },
-    { id: '#devices', label: '设备', icon: Network },
-    { id: '#icons', label: '图标', icon: Box },
-    { id: '#about', label: '关于', icon: Info },
-  ]
 
   return (
     <>
@@ -195,7 +184,7 @@ export function Sidebar({ activeTab, onTabChange, onLogout, isCollapsed = false,
           </div>
 
           {/* 导航菜单 */}
-          <nav className={cn("flex-1 py-6 sm:py-8 overflow-y-auto space-y-2", isCollapsed ? "px-2.5" : "px-3 sm:px-4")}>
+          <nav aria-label="主导航" className={cn("flex-1 py-6 sm:py-8 overflow-y-auto space-y-2", isCollapsed ? "px-2.5" : "px-3 sm:px-4")}>
             <ul className="space-y-0.5">
               {navItems.map((item, index) => {
                 const Icon = item.icon
@@ -203,6 +192,8 @@ export function Sidebar({ activeTab, onTabChange, onLogout, isCollapsed = false,
                 return (
                   <li key={item.id}>
                     <button
+                      aria-label={item.label}
+                      aria-current={isActive ? 'page' : undefined}
                       onClick={async () => {
                         if (await onTabChange(item.id)) setIsMobileMenuOpen(false)
                       }}
@@ -341,25 +332,6 @@ export function Sidebar({ activeTab, onTabChange, onLogout, isCollapsed = false,
 
 // 手机底部导航栏组件
 export function MobileBottomNav({ activeTab, onTabChange, windowWidth = 1024 }) {
-  const navItems = [
-    { id: '#compose', label: '项目', icon: Boxes },
-    {
-      id: '#containers',
-      label: '容器',
-      icon: Server,
-    },
-    {
-      id: '#images',
-      label: '镜像',
-      icon: Box,
-    },
-    {
-      id: '#about',
-      label: '关于',
-      icon: Info,
-    },
-  ]
-
   return (
     <>
       {windowWidth < 768 && (

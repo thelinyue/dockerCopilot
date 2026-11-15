@@ -261,15 +261,15 @@ export function Compose({ onDirty, initialTarget, onOpenContainers }) {
     } catch (e) { setImportError(e.message) } finally { setBusy(false) }
   }
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 text-gray-900 dark:text-gray-100">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 space-y-4 sm:space-y-0 pt-4 sm:pt-0">
+    <div className="max-w-7xl mx-auto text-gray-900 dark:text-gray-100">
+      <div className="px-2 sm:px-6 py-4 flex flex-col sm:flex-row justify-between items-start sm:items-center space-y-4 sm:space-y-0">
         <h2 className="text-2xl font-bold text-gray-900 dark:text-white">项目管理</h2>
         <div className="flex flex-wrap items-center gap-3">
           <button type="button" className="btn-secondary gap-2" onClick={() => { setImportError(''); setImportOpen(true) }}><Plus className="h-4 w-4" />接管项目</button>
           <button type="button" className="btn-primary gap-2 disabled:opacity-50" disabled={busy || isFetching || fetchingContainers} onClick={() => { refetch(); refreshContainers() }}><RefreshCw className={cn('h-4 w-4', (isFetching || fetchingContainers) && 'animate-spin')} />刷新</button>
         </div>
       </div>
-      <div className="space-y-4">
+      <div className="px-2 sm:px-6 space-y-4">
         {info && !info.capabilities.compose && <Notice type="warning">当前容器缺少项目管理组件，请升级 DockerCopilot 镜像。</Notice>}
         <Notice>{error?.message}</Notice>
         <Notice type="warning">{data?.warning}</Notice>

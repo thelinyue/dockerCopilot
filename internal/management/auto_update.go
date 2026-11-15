@@ -14,11 +14,16 @@ import (
 )
 
 func (m *Manager) AutoUpdate(ctx context.Context, id string) error {
+	run := newCheckRun()
+	if err := m.checkAll(ctx, id, run, 10); err != nil {
+		return err
+	}
+	m.message(id, 10, "检测完成，正在按本次结果检查自动更新条件")
 	list, err := m.Context.DockerClient.ContainerList(ctx, container.ListOptions{All: true})
 	if err != nil {
 		return err
 	}
-	results, failures := []string{}, 0
+	results, failures := []string{run.summary()}, 0
 	for _, c := range list {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -26,7 +31,7 @@ func (m *Manager) AutoUpdate(ctx context.Context, id string) error {
 		if c.Labels[projectLabel] != "" {
 			continue
 		}
-		line, err := m.autoUpdateContainer(ctx, id, c.ID)
+		line, err := m.autoUpdateContainer(ctx, id, c.ID, run)
 		results = append(results, line)
 		if err != nil {
 			failures++
@@ -44,7 +49,7 @@ func (m *Manager) AutoUpdate(ctx context.Context, id string) error {
 		if len(project.Services) == 0 {
 			continue
 		}
-		lines, err := m.autoUpdateProject(ctx, id, project)
+		lines, err := m.autoUpdateProject(ctx, id, project, run)
 		results = append(results, lines...)
 		if err != nil {
 			failures++
@@ -52,12 +57,12 @@ func (m *Manager) AutoUpdate(ctx context.Context, id string) error {
 	}
 	p, _ := m.Context.GetProgress(id)
 	p.DetailMsg = strings.Join(results, "\n")
-	if failures > 0 && p.Status != "rollback_failed" {
+	if (failures > 0 || run.failed > 0) && p.Status != "rollback_failed" {
 		p.Status = "failed"
 	}
 	m.Context.UpdateProgress(id, p)
-	if failures > 0 {
-		return fmt.Errorf("自动更新完成，%d 项失败或无法确认，请查看任务详情", failures)
+	if failures > 0 || run.failed > 0 {
+		return fmt.Errorf("检测并更新完成，检测 %d 项无法确认、更新 %d 项失败或无法确认，请查看任务详情", run.failed, failures)
 	}
 	return nil
 }
@@ -68,7 +73,7 @@ func (m *Manager) finishAutoObject(id string, release func()) {
 	m.Context.CleanupTaskImages(id)
 }
 
-func (m *Manager) autoUpdateContainer(ctx context.Context, id, containerID string) (string, error) {
+func (m *Manager) autoUpdateContainer(ctx context.Context, id, containerID string, run *checkRun) (string, error) {
 	v, release, err := m.Context.AcquireContainer(ctx, containerID, "")
 	if err != nil {
 		if svc.IsBusy(err) {
@@ -94,7 +99,10 @@ func (m *Manager) autoUpdateContainer(ctx context.Context, id, containerID strin
 	if err := utiles.CanRecreate(v); err != nil {
 		return v.Name + ": 已跳过，" + err.Error(), nil
 	}
-	checked, currentCheck := m.checkContainer(ctx, v, v.Config.Image)
+	if !run.unchanged(v) {
+		return v.Name + ": 已跳过（容器在本次检测后已变化或未能确认，请重新执行）", nil
+	}
+	checked, currentCheck := m.checkContainer(ctx, v, v.Config.Image, run)
 	if !currentCheck {
 		return v.Name + ": 已跳过（检测期间容器已变化）", nil
 	}
@@ -110,7 +118,7 @@ func (m *Manager) autoUpdateContainer(ctx context.Context, id, containerID strin
 	return v.Name + ": 已更新", nil
 }
 
-func (m *Manager) autoUpdateProject(ctx context.Context, id string, project Project) ([]string, error) {
+func (m *Manager) autoUpdateProject(ctx context.Context, id string, project Project, run *checkRun) ([]string, error) {
 	scope := svc.ProjectScope(project.Name, project.Directory)
 	release, err := m.Context.Acquire(scope)
 	if err != nil {
@@ -155,7 +163,7 @@ func (m *Manager) autoUpdateProject(ctx context.Context, id string, project Proj
 				failures++
 				break
 			}
-			if v.State == nil || !v.State.Running || excluded(s, v) || isCopilot(v) {
+			if v.Config == nil || v.State == nil || !v.State.Running || excluded(s, v) || isCopilot(v) || !run.unchanged(v) {
 				allowed = false
 				break
 			}
@@ -166,11 +174,11 @@ func (m *Manager) autoUpdateProject(ctx context.Context, id string, project Proj
 			replicas = append(replicas, v)
 		}
 		if !allowed {
-			results = append(results, p.Name+"/"+service.Name+": 已跳过（副本停止、被排除、程序自身或无法可靠重建）")
+			results = append(results, p.Name+"/"+service.Name+": 已跳过（副本停止、被排除、状态已变化、程序自身或无法可靠重建）")
 			continue
 		}
 		for _, v := range replicas {
-			checked, currentCheck := m.checkContainer(ctx, v, target.Image)
+			checked, currentCheck := m.checkContainer(ctx, v, target.Image, run)
 			if !currentCheck {
 				allowed = false
 				break

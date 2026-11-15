@@ -11,6 +11,21 @@ export function PageHeader({ title, children }) {
   )
 }
 
+// 四个设置面板共用页头和分类导航，操作仍由各面板持有，避免重复标题和额外留白。
+export function SettingsPanel({ navigation, scope, section, actions, children }) {
+  return <>
+    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+      <div className="flex items-center gap-3 min-w-0">
+        <h2 className="text-2xl font-bold flex-shrink-0">设置</h2>
+        {scope && <span className="min-w-0 truncate text-xs sm:text-sm text-gray-500 dark:text-gray-400" title={scope}>{scope}</span>}
+      </div>
+      {actions && <div className="flex flex-wrap items-center gap-2 flex-shrink-0">{actions}</div>}
+    </div>
+    {navigation}
+    <div id="settings-panel" role="tabpanel" aria-labelledby={`settings-tab-${section}`}>{children}</div>
+  </>
+}
+
 export function UpdateBadge() {
   return <div role="img" aria-label="有可用更新" className="absolute -top-[2px] -right-[2px] w-[80px] h-[80px] pointer-events-none overflow-hidden z-20 rounded-tr-2xl">
     <div className="absolute top-0 right-0 w-full h-full flex items-center justify-center">
