@@ -51,23 +51,6 @@ func main() {
 	defer server.Stop()
 	ctx := svc.NewServiceContext(c)
 
-	// Ensure data directory and config exist (Auto-init)
-	dataDir := "/data/config/image"
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		logx.Errorf("Failed to create data directory: %v", err)
-	}
-
-	imageLogosPath := "/data/config/imageLogos.js"
-	if _, err := os.Stat(imageLogosPath); os.IsNotExist(err) {
-		defaultConfig := []byte(`// 自定义镜像logo配置
-export const customImageLogos = {
-};
-`)
-		if err := os.WriteFile(imageLogosPath, defaultConfig, 0644); err != nil {
-			logx.Errorf("Failed to create default imageLogos.js: %v", err)
-		}
-	}
-
 	manager := management.New(ctx)
 	manager.Start()
 	defer manager.Stop()
@@ -108,20 +91,6 @@ func RegisterHandlers(engine *rest.Server) {
 	} {
 		engine.AddRoute(rest.Route{Method: http.MethodGet, Path: path, Handler: assetsHandler.ServeHTTP})
 	}
-
-	// Serve custom icons
-	iconFileServer := http.StripPrefix("/src/config/image/", http.FileServer(http.Dir("/data/config/image")))
-	engine.AddRoutes(
-		[]rest.Route{
-			{
-				Method: http.MethodGet,
-				Path:   "/src/config/image/:file",
-				Handler: func(w http.ResponseWriter, r *http.Request) {
-					iconFileServer.ServeHTTP(w, r)
-				},
-			},
-		},
-	)
 
 	engine.AddRoutes(
 		[]rest.Route{

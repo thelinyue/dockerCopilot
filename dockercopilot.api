@@ -171,4 +171,8 @@ service dockerCopilot {
 
 	@handler obtain
 	get / returns (Resp)
+
+	// imageName 查询参数指定镜像仓库，删除其全部标签的自定义图标。
+	@handler delete
+	delete / returns (Resp)
 }

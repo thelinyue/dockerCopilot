@@ -34,6 +34,10 @@ function AppContent() {
   const [windowWidth, setWindowWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1024)
   const [userPreferredCollapsed, setUserPreferredCollapsed] = useState(false)
 
+  useEffect(() => {
+    if (!isAuthenticated) queryClient.removeQueries({ predicate: query => ['iconBlob', 'customIcons'].includes(query.queryKey[1]) })
+  }, [isAuthenticated])
+
   // 智能计算侧边栏是否应该收缩
   const getSmartCollapsedState = (width, userPreference) => {
     if (width < 768) {

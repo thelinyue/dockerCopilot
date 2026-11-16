@@ -20,6 +20,11 @@ import (
 
 func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext, manager *management.Manager) {
 	manager.Routes(server)
+	server.AddRoutes([]rest.Route{
+		{Method: http.MethodGet, Path: "/icons/:device/:file", Handler: icons.PublicHandler(serverCtx)},
+		{Method: http.MethodGet, Path: "/src/config/image/:file", Handler: icons.PublicHandler(serverCtx)},
+	})
+	addRoutes(server, manager, []rest.Route{{Method: http.MethodGet, Path: "/api/icon-file", Handler: icons.FileHandler(serverCtx)}})
 	addRoutes(server, manager,
 		[]rest.Route{
 			{
@@ -79,6 +84,11 @@ func RegisterHandlers(server *rest.Server, serverCtx *svc.ServiceContext, manage
 
 	addRoutes(server, manager,
 		[]rest.Route{
+			{
+				Method:  http.MethodDelete,
+				Path:    "/",
+				Handler: icons.DeleteHandler(serverCtx),
+			},
 			{
 				Method:  http.MethodPost,
 				Path:    "/",

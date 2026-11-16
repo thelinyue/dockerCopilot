@@ -1,23 +1,33 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useDeviceAPI } from '../hooks/useDevice.jsx'
+import { iconAssetOptions } from '../hooks/iconAssets.js'
+import { iconFilename } from '../utils/icons.js'
 
 // 自定义图标通过带认证的节点请求加载，不把登录令牌或设备凭据放进图片 URL。
-export function DeviceImage({ src, ...props }) {
-  const { managementAPI } = useDeviceAPI()
+export function DeviceImage({ src, eager = false, ...props }) {
+  const { deviceId, managementAPI } = useDeviceAPI()
+  const placeholder = useRef(null)
+  const [visible, setVisible] = useState(eager)
   const [asset, setAsset] = useState(null)
-  const custom = typeof src === 'string' && src.startsWith('/src/config/image/')
+  const custom = iconFilename(src) !== null
+  const query = useQuery({ ...iconAssetOptions(deviceId, managementAPI, src), enabled: custom && visible })
   useEffect(() => {
     if (!custom) return
-    const controller = new AbortController()
-    let objectURL
-    setAsset(null)
-    managementAPI.icon(src.split('/').pop(), controller.signal).then(response => {
-      if (controller.signal.aborted) return
-      objectURL = URL.createObjectURL(response.data)
-      setAsset(objectURL)
-    }).catch(error => { if (error.code !== 'ERR_CANCELED') setAsset('data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" rx="8" fill="#e5e7eb"/><text x="32" y="40" text-anchor="middle" fill="#6b7280" font-size="24">?</text></svg>')) })
-    return () => { controller.abort(); if (objectURL) URL.revokeObjectURL(objectURL) }
-  }, [src, custom, managementAPI])
-  if (custom && !asset) return <span className={props.className} aria-label={props.alt} />
-  return <img {...props} src={custom ? asset : src} />
+    if (eager || typeof IntersectionObserver === 'undefined') { setVisible(true); return }
+    if (visible || !placeholder.current) return
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) { setVisible(true); observer.disconnect() }
+    }, { rootMargin: '200px' })
+    observer.observe(placeholder.current)
+    return () => observer.disconnect()
+  }, [custom, eager, visible])
+  useEffect(() => {
+    if (!custom || !query.data) { setAsset(null); return }
+    const url = URL.createObjectURL(query.data)
+    setAsset({ blob: query.data, url })
+    return () => URL.revokeObjectURL(url)
+  }, [custom, query.data])
+  if (custom && (!asset || asset.blob !== query.data)) return <span ref={placeholder} role="img" aria-label={props.alt} title={query.error?.message} className={`${props.className || ''} inline-flex items-center justify-center bg-gray-100 dark:bg-gray-700 text-gray-400`}>{query.isError ? '?' : ''}</span>
+  return <img loading="lazy" {...props} src={custom ? asset.url : src} />
 }

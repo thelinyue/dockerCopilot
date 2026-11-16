@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/google/uuid"
@@ -16,157 +15,105 @@ import (
 	"github.com/zeromicro/go-zero/rest/httpx"
 )
 
-var imageNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/:-]*$`)
+const maxIconBytes = 2 << 20
 
 var allowedImageTypes = map[string]string{
-	".png":  "image/png",
-	".jpg":  "image/jpeg",
-	".jpeg": "image/jpeg",
-	".webp": "image/webp",
-	".gif":  "image/gif",
+	".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+	".webp": "image/webp", ".gif": "image/gif",
 }
 
 func UploadHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// 1. 解析 Multipart 表单
-		err := r.ParseMultipartForm(10 << 20) // 10MB 限制
-		if err != nil {
-			writeUploadError(w, http.StatusBadRequest, "failed to parse form")
+		// 表单内存阈值不是文件大小上限；另行限制请求总量及实际文件字节数。
+		r.Body = http.MaxBytesReader(w, r.Body, maxIconBytes+(64<<10))
+		if err := r.ParseMultipartForm(maxIconBytes); err != nil {
+			writeUploadError(w, 400, "无法读取上传表单，请选择不超过 2 MiB 的图片")
 			return
 		}
-
-		// 2. 获取文件和 Key
-		file, handler, err := r.FormFile("file")
+		defer r.MultipartForm.RemoveAll()
+		file, header, err := r.FormFile("file")
 		if err != nil {
-			writeUploadError(w, http.StatusBadRequest, "failed to get file")
+			writeUploadError(w, 400, "请选择要上传的图片")
 			return
 		}
 		defer file.Close()
-
-		imageNameKey := r.FormValue("imageName")
-		if err := validateImageName(imageNameKey); err != nil {
-			writeUploadError(w, http.StatusBadRequest, err.Error())
+		if header.Size > maxIconBytes {
+			writeUploadError(w, 400, "图标文件大小不能超过 2 MiB")
 			return
 		}
-
-		// 3. 确保目录存在 (防御性编程)
-		dataPath := imageUploadDir
-		if err := os.MkdirAll(dataPath, 0o755); err != nil {
-			writeUploadError(w, http.StatusInternalServerError, "failed to prepare upload dir")
-			return
-		}
-
-		// 4. 确定文件名
-		filename, err := generateStoredFilename(file, handler)
+		repository, err := normalizeRepository(r.FormValue("imageName"))
 		if err != nil {
-			writeUploadError(w, http.StatusBadRequest, err.Error())
+			writeUploadError(w, 400, err.Error())
 			return
 		}
-
-		dstPath := filepath.Join(dataPath, filename)
-		dst, err := os.Create(dstPath)
+		filename, err := generateStoredFilename(file, header)
 		if err != nil {
-			writeUploadError(w, http.StatusInternalServerError, "failed to create file on server")
+			writeUploadError(w, 400, err.Error())
 			return
 		}
-		defer dst.Close()
-
-		if _, err := io.Copy(dst, file); err != nil {
-			writeUploadError(w, http.StatusInternalServerError, "failed to copy file content")
+		if err = ensureImageDirectory(); err != nil {
+			writeUploadError(w, 500, "无法创建图片目录，请检查数据目录权限")
 			return
 		}
-
-		// 5. 更新 imageLogos.js
-		jsPath := imageLogosPath
-		if err := updateImageLogosJS(jsPath, imageNameKey, filename); err != nil {
-			_ = os.Remove(dstPath)
-			writeUploadError(w, http.StatusInternalServerError, "failed to update config")
+		path := filepath.Join(imageUploadDir, filename)
+		destination, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+		if err != nil {
+			writeUploadError(w, 500, "无法创建图片文件，请检查数据目录空间及权限")
 			return
 		}
-
-		httpx.OkJsonCtx(r.Context(), w, types.Resp{
-			Code: 200,
-			Msg:  "Success",
-			Data: filename,
-		})
+		committed := false
+		defer func() {
+			if !committed {
+				_ = os.Remove(path)
+			}
+		}()
+		written, copyErr := io.Copy(destination, io.LimitReader(file, maxIconBytes+1))
+		if copyErr == nil {
+			copyErr = destination.Sync()
+		}
+		closeErr := destination.Close()
+		if written > maxIconBytes {
+			writeUploadError(w, 400, "图标文件大小不能超过 2 MiB")
+			return
+		}
+		if copyErr != nil || closeErr != nil {
+			writeUploadError(w, 500, "图片写入失败，请检查数据目录空间及权限")
+			return
+		}
+		warning, err := changeIcon(repository, filename)
+		if err != nil {
+			writeUploadError(w, 500, err.Error())
+			return
+		}
+		committed = true
+		message := "图标已保存，已应用到该镜像仓库的全部标签"
+		if warning != "" {
+			message = warning
+		}
+		httpx.OkJsonCtx(r.Context(), w, types.Resp{Code: 200, Msg: message, Data: filename})
 	}
 }
 
-func validateImageName(imageName string) error {
-	if imageName == "" {
-		return fmt.Errorf("imageName is required")
+func generateStoredFilename(file multipart.File, header *multipart.FileHeader) (string, error) {
+	ext := strings.ToLower(filepath.Ext(header.Filename))
+	expected, allowed := allowedImageTypes[ext]
+	if !allowed {
+		return "", fmt.Errorf("仅支持 PNG、JPEG、WebP、GIF，不支持 SVG，请先转换格式")
 	}
-	if !imageNamePattern.MatchString(imageName) {
-		return fmt.Errorf("invalid imageName")
-	}
-	return nil
-}
-
-func generateStoredFilename(file multipart.File, handler *multipart.FileHeader) (string, error) {
-	header := make([]byte, 512)
-	n, err := file.Read(header)
+	buffer := make([]byte, 512)
+	n, err := file.Read(buffer)
 	if err != nil && err != io.EOF {
-		return "", fmt.Errorf("failed to inspect upload")
+		return "", fmt.Errorf("图片读取失败，请重新选择文件")
 	}
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return "", fmt.Errorf("failed to reset upload stream")
+		return "", fmt.Errorf("无法读取上传图片，请重新选择文件")
 	}
-
-	ext := strings.ToLower(filepath.Ext(handler.Filename))
-	expectedType, ok := allowedImageTypes[ext]
-	if !ok {
-		return "", fmt.Errorf("only png, jpg, jpeg, webp and gif files are allowed")
+	if http.DetectContentType(buffer[:n]) != expected {
+		return "", fmt.Errorf("图片内容与扩展名不一致，请选择有效图片")
 	}
-
-	detectedType := http.DetectContentType(header[:n])
-	if detectedType != expectedType {
-		return "", fmt.Errorf("uploaded file content does not match its extension")
-	}
-
 	return uuid.NewString() + ext, nil
 }
 
 func writeUploadError(w http.ResponseWriter, statusCode int, msg string) {
-	httpx.WriteJson(w, statusCode, types.Resp{
-		Code: statusCode,
-		Msg:  msg,
-		Data: map[string]interface{}{},
-	})
-}
-
-func updateImageLogosJS(filePath, imageName, filename string) error {
-	// 读取文件
-	contentBytes, err := os.ReadFile(filePath)
-	if err != nil {
-		return err
-	}
-	content := string(contentBytes)
-
-	// 前端使用的容器路径
-	containerPath := fmt.Sprintf("/src/config/image/%s", filename)
-
-	if strings.Contains(content, fmt.Sprintf(`"%s"`, imageName)) {
-		// 更新现有行
-		re := regexp.MustCompile(fmt.Sprintf(`"%s"\s*:\s*".*"`, regexp.QuoteMeta(imageName)))
-		content = re.ReplaceAllString(content, fmt.Sprintf(`"%s": "%s"`, imageName, containerPath))
-	} else {
-		// 插入新行
-		// 查找 `export const customImageLogos = {`
-		startIdx := strings.Index(content, "export const customImageLogos = {")
-		if startIdx == -1 {
-			return fmt.Errorf("invalid config format")
-		}
-		// 尝试查找右大括号。这里假设它是最后一个右大括号逻辑或者是文件末尾。
-		// 一个简单的启发式方法：插入到最后一个 `}` 或 `};` 之前。
-		lastBraceIdx := strings.LastIndex(content, "}")
-		if lastBraceIdx == -1 || lastBraceIdx < startIdx {
-			return fmt.Errorf("invalid config format, no closing brace")
-		}
-
-		newLine := fmt.Sprintf(`  "%s": "%s",`, imageName, containerPath)
-		// 插入到最后一个大括号之前
-		content = content[:lastBraceIdx] + newLine + "\n" + content[lastBraceIdx:]
-	}
-
-	return os.WriteFile(filePath, []byte(content), 0644)
+	httpx.WriteJson(w, statusCode, types.Resp{Code: statusCode, Msg: msg, Data: map[string]interface{}{}})
 }

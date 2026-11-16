@@ -6,9 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -262,20 +260,6 @@ func (m *Manager) Routes(server *rest.Server) {
 			return m.ComposeAction(ctx, current, v.Action, v.Services, id, v.Action == "update")
 		})
 		reply(w, map[string]string{"taskID": id}, err)
-	})
-	add("GET", "/icon-file", func(w http.ResponseWriter, r *http.Request) {
-		name := r.URL.Query().Get("name")
-		if name == "" || name != filepath.Base(name) || strings.ContainsAny(name, `/\\`) {
-			reply(w, nil, fmt.Errorf("图标文件名无效"))
-			return
-		}
-		path := filepath.Join("/data/config/image", name)
-		info, err := os.Lstat(path)
-		if err != nil || !info.Mode().IsRegular() {
-			http.NotFound(w, r)
-			return
-		}
-		http.ServeFile(w, r, path)
 	})
 	add("GET", "/devices", func(w http.ResponseWriter, r *http.Request) { reply(w, m.Context.Devices.List(), nil) })
 	saveDevice := func(w http.ResponseWriter, r *http.Request) {

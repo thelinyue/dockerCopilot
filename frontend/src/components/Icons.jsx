@@ -1,449 +1,256 @@
+import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { Search, Copy, Eye, Star, Check, Upload, Trash2, RefreshCw, X } from 'lucide-react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { DeviceImage } from './DeviceImage.jsx'
-import React, { useState, useEffect } from 'react'
-import { Search, Copy, Eye, Star, Check, X } from 'lucide-react'
 import { cn } from '../utils/cn.js'
-import { builtInImageLogos, getSupportedImageNames } from '../config/imageLogos.js'
-import { useQuery } from '@tanstack/react-query'
+import { builtInImageLogos } from '../config/imageLogos.js'
 import { useDeviceAPI } from '../hooks/useDevice.jsx'
-import { SettingsPanel } from './ManagementUI.jsx'
+import { useIcons } from '../hooks/useIcons.js'
+import { iconAssetOptions } from '../hooks/iconAssets.js'
+import { ICON_ACCEPT, iconFilename, iconId, migrateFavorites, normalizeImageRepository } from '../utils/icons.js'
+import { Dialog, Notice, SettingsPanel, useConfirmation } from './ManagementUI.jsx'
+
+const EMPTY_ICONS = {}
+const categories = { all: '全部图标', custom: '自定义图标', builtin: '内置图标', favorites: '收藏' }
+
+function readFavorites(deviceId) {
+  try { return JSON.parse(localStorage.getItem(`docker_copilot_icon_favorites:${deviceId}`) || '[]') }
+  catch { return [] }
+}
 
 export function Icons({ layout }) {
-  const { deviceId, imageAPI, managementAPI } = useDeviceAPI()
+  const { deviceId, managementAPI, imageAPI } = useDeviceAPI()
+  const client = useQueryClient()
+  const confirm = useConfirmation()
+  const query = useIcons()
+  const customIcons = query.data || EMPTY_ICONS
   const [searchTerm, setSearchTerm] = useState('')
-  const [selectedCategory, setSelectedCategory] = useState('all')
-  const [copiedIcon, setCopiedIcon] = useState(null)
-  const [selectedIcon, setSelectedIcon] = useState(null)
-  const [favorites, setFavorites] = useState([])
-
-  // 获取自定义图标
-  const { data: customIcons = {} } = useQuery({
-    queryKey: [deviceId, 'customIcons'],
-    queryFn: async () => {
-      const response = await imageAPI.getIcons()
-      if (response.data.code === 200 || response.data.code === 0) {
-        return response.data.data || {}
-      }
-      return {}
-    },
-    // 每次进入页面都刷新，保证是最新的
-    refetchOnMount: true,
+  const [category, setCategory] = useState('all')
+  const [favorites, setFavorites] = useState(() => {
+    const saved = readFavorites(deviceId)
+    return Array.isArray(saved) ? saved : []
   })
+  const [selected, setSelected] = useState(null)
+  const [uploadTarget, setUploadTarget] = useState(null)
+  const [uploadName, setUploadName] = useState('')
+  const [uploadFile, setUploadFile] = useState(null)
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+  const [copied, setCopied] = useState(null)
+  const [manualCopy, setManualCopy] = useState(null)
+  const selectedAsset = useQuery({ ...iconAssetOptions(deviceId, managementAPI, selected?.url), enabled: !!selected && iconFilename(selected.url) !== null })
+  const copyTimer = useRef(null)
+  const previews = useRef(new Set())
+  const uploadButton = useRef(null)
+  const selectedTrigger = useRef(null)
+  const entries = useMemo(() => [
+    ...Object.entries(customIcons).map(([name, url]) => ({ source: 'custom', name, url })),
+    ...Object.entries(builtInImageLogos).map(([name, url]) => ({ source: 'builtin', name, url })),
+  ], [customIcons])
 
-  // 从localStorage加载收藏
   useEffect(() => {
-    const savedFavorites = localStorage.getItem(`docker_copilot_icon_favorites:${deviceId}`)
-    if (savedFavorites) {
-      try {
-        setFavorites(JSON.parse(savedFavorites))
-      } catch (e) {
-        console.error('解析收藏数据失败:', e)
-      }
-    }
+    const next = migrateFavorites(readFavorites(deviceId), entries, query.isFetched && !query.isError)
+    setFavorites(next)
+    try { localStorage.setItem(`docker_copilot_icon_favorites:${deviceId}`, JSON.stringify(next)) }
+    catch { setError('浏览器无法保存收藏，当前收藏仅在本次页面中有效') }
+  }, [deviceId, entries, query.dataUpdatedAt, query.isFetched, query.isError])
+
+  useEffect(() => () => {
+    clearTimeout(copyTimer.current)
+    for (const url of previews.current) URL.revokeObjectURL(url)
   }, [])
 
-  // 保存收藏到localStorage
-  const saveFavorites = (newFavorites) => {
-    setFavorites(newFavorites)
-    localStorage.setItem(`docker_copilot_icon_favorites:${deviceId}`, JSON.stringify(newFavorites))
+  const toggleFavorite = entry => {
+    const id = iconId(entry)
+    const next = favorites.includes(id) ? favorites.filter(item => item !== id) : [...favorites, id]
+    setFavorites(next)
+    try { localStorage.setItem(`docker_copilot_icon_favorites:${deviceId}`, JSON.stringify(next)) }
+    catch { setError('浏览器无法保存收藏，当前收藏仅在本次页面中有效') }
   }
 
-  // 切换收藏状态
-  const toggleFavorite = (iconName) => {
-    const newFavorites = favorites.includes(iconName)
-      ? favorites.filter(name => name !== iconName)
-      : [...favorites, iconName]
-    saveFavorites(newFavorites)
-  }
-
-  // 复制图标URL到剪贴板
-  const copyToClipboard = async (url, iconName) => {
+  const getBlob = url => client.fetchQuery(iconAssetOptions(deviceId, managementAPI, url))
+  const copyIcon = async (entry, dataLink = false) => {
+    setError('')
     try {
-      let link = url
-      if (url.startsWith('/src/config/image/')) {
-        const response = await managementAPI.icon(url.split('/').pop())
-        link = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(response.data) })
-      }
-      await navigator.clipboard.writeText(link)
-      setCopiedIcon(iconName)
-      setTimeout(() => setCopiedIcon(null), 2000)
-    } catch (err) {
-      console.error('复制失败:', err)
-    }
+      let link = entry.url
+      if (iconFilename(entry.url) !== null && dataLink) {
+        const blob = await getBlob(entry.url)
+        link = await new Promise((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = () => resolve(reader.result)
+          reader.onerror = () => reject(new Error('图像数据读取失败，请重试'))
+          reader.readAsDataURL(blob)
+        })
+      } else link = iconFilename(entry.url) !== null ? imageAPI.iconURL(iconFilename(entry.url)) : new URL(entry.url, window.location.href).href
+      if (!navigator.clipboard?.writeText) { setManualCopy({ link, reason: '当前浏览器或连接方式不支持自动复制' }); return }
+      try { await navigator.clipboard.writeText(link) }
+      catch (err) { setManualCopy({ link, reason: err.name === 'NotAllowedError' ? '浏览器拒绝访问剪贴板' : `自动复制失败：${err.message || '剪贴板暂不可用'}` }); return }
+      setCopied(dataLink ? `data:${iconId(entry)}` : iconId(entry))
+      clearTimeout(copyTimer.current)
+      copyTimer.current = setTimeout(() => setCopied(null), 2000)
+    } catch (err) { setError(err.message || '复制失败，请重试') }
   }
 
-  const openIcon = async url => {
-    if (!url.startsWith('/src/config/image/')) { window.open(url, '_blank', 'noopener,noreferrer'); return }
+  const openIcon = async entry => {
     const preview = window.open('', '_blank')
-    if (preview) preview.opener = null
+    if (!preview) { setError('新窗口被浏览器拦截，请允许弹出窗口后重试'); return }
+    preview.opener = null
+    setError('')
     try {
-      const response = await managementAPI.icon(url.split('/').pop())
-      const objectURL = URL.createObjectURL(response.data)
-      if (preview) preview.location.href = objectURL
-      setTimeout(() => URL.revokeObjectURL(objectURL), 60000)
-    } catch (error) { preview?.close(); alert(error.message || '图标读取失败') }
+      if (iconFilename(entry.url) === null) preview.location.replace(new URL(entry.url, window.location.href).href)
+      else {
+        const url = URL.createObjectURL(await getBlob(entry.url))
+        previews.current.add(url)
+        preview.location.replace(url)
+        setTimeout(() => { URL.revokeObjectURL(url); previews.current.delete(url) }, 60000)
+      }
+    } catch (err) { preview.close(); setError(err.message || '图标读取失败，请重试') }
   }
 
-  // 通用图标过滤函数
-  const filterIconsList = (sourceIcons) => {
-    let icons = Object.entries(sourceIcons || {})
-
-    // 按分类过滤
-    if (selectedCategory !== 'all') {
-      icons = icons.filter(([name, url]) => {
-        switch (selectedCategory) {
-          case 'favorites':
-            return favorites.includes(name)
-          default:
-            return true
-        }
-      })
-    }
-
-    // 按搜索词过滤
-    if (searchTerm) {
-      icons = icons.filter(([name]) =>
-        name.toLowerCase().includes(searchTerm.toLowerCase())
-      )
-    }
-
-    return icons
+  const startUpload = entry => {
+    if (!entry) selectedTrigger.current = null
+    setSelected(null)
+    setError('')
+    setMessage('')
+    const name = entry ? normalizeImageRepository(entry.name) : ''
+    setUploadTarget(entry ? name : '')
+    setUploadName(name)
+    setUploadFile(null)
+  }
+  // 删除或归并历史标签会移除原卡片，焦点回到仍存在的入口，避免停留在 document.body。
+  const restoreLibraryFocus = () => requestAnimationFrame(() => {
+    const target = selectedTrigger.current?.isConnected ? selectedTrigger.current : uploadButton.current
+    target?.focus({ preventScroll: true })
+  })
+  const submitUpload = async event => {
+    event.preventDefault()
+    if (pending) return
+    setError('')
+    setPending(true)
+    try {
+      setMessage(await query.upload(uploadFile, uploadName.trim()))
+      setUploadTarget(null)
+      restoreLibraryFocus()
+    } catch (err) { setError(err.message || '上传失败，请重试') }
+    finally { setPending(false) }
+  }
+  const deleteIcon = async entry => {
+    const repository = normalizeImageRepository(entry.name)
+    if (!await confirm({ title: '删除自定义图标', message: `设备：${query.deviceName}\n镜像仓库：${repository}\n删除后，该仓库全部标签恢复内置或默认图标。`, confirmText: '删除', danger: true })) return
+    setError('')
+    setMessage('')
+    setPending(true)
+    try { setMessage(await query.remove(repository)); setSelected(null); restoreLibraryFocus() }
+    catch (err) { setError(err.message || '删除失败，请重试') }
+    finally { setPending(false) }
   }
 
-  const filteredBuiltInIcons = (selectedCategory === 'custom')
-    ? []
-    : filterIconsList(builtInImageLogos)
-
-  const filteredCustomIcons = (selectedCategory === 'builtin')
-    ? []
-    : filterIconsList(customIcons)
-
-  const categories = ['all', 'custom', 'builtin']
-
-  return (
-    <SettingsPanel {...layout}>
-      {/* 搜索和过滤 */}
-      <div className="card p-4 space-y-3">
-        {/* 搜索框 */}
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
-          <input
-            type="text"
-            aria-label="搜索图标名称"
-            placeholder="搜索图标名称..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-          />
+  const term = searchTerm.trim().toLowerCase()
+  const filtered = entries.filter(entry => (!term || entry.name.toLowerCase().includes(term)) && (
+    category === 'all' || (category === 'favorites' ? favorites.includes(iconId(entry)) : entry.source === category)
+  ))
+  const favoriteCount = entries.filter(entry => favorites.includes(iconId(entry))).length
+  const resultLoading = query.isPending && (category === 'custom' || category === 'favorites')
+  const queryNotice = query.isError && <Notice>自定义图标读取失败：{query.error.message} <button type="button" disabled={query.isFetching} onClick={() => query.refetch()} className="underline disabled:opacity-50">重试</button></Notice>
+  const showGlobalError = !selected && uploadTarget === null
+  return <SettingsPanel {...layout} actions={<>
+    <button type="button" className="btn-secondary gap-2 disabled:opacity-50" disabled={query.isFetching || pending} onClick={() => query.refetch()}><RefreshCw className={cn('h-4 w-4', query.isFetching && 'animate-spin')} />刷新</button>
+    <button ref={uploadButton} type="button" className="btn-primary gap-2" onClick={() => startUpload(null)}><Upload className="h-4 w-4" />上传图标</button>
+  </>}>
+    <div className="space-y-3">
+      {queryNotice}
+      {showGlobalError && <Notice onClose={() => setError('')}>{error}</Notice>}
+      <Notice type={message.includes('回收失败') ? 'warning' : 'success'} onClose={() => setMessage('')}>{message}</Notice>
+      <div className="card p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+        <div className="relative flex-1 min-w-0">
+          <Search aria-hidden="true" className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+          <input type="search" aria-label="搜索图标名称" placeholder="搜索图标名称" value={searchTerm} onChange={event => setSearchTerm(event.target.value)} className="input pl-10 pr-12 [&::-webkit-search-cancel-button]:appearance-none" />
+          {searchTerm && <button type="button" aria-label="清空图标搜索" onClick={() => setSearchTerm('')} className="btn-icon-secondary absolute right-0 top-0 h-full inline-flex items-center justify-center"><X className="w-4 h-4" /></button>}
         </div>
-
-        {/* 分类过滤和统计 */}
-        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-          <select
-            aria-label="图标分类"
-            value={selectedCategory}
-            onChange={(e) => setSelectedCategory(e.target.value)}
-            className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-          >
-            {categories.map(category => (
-              <option key={category} value={category}>
-                {category === 'all' ? '全部分类' :
-                  category === 'custom' ? '本地图标' :
-                    category === 'builtin' ? '内置图标' : category}
-              </option>
-            ))}
+        <div className="flex items-center gap-3">
+          <select aria-label="图标分类" value={category} onChange={event => setCategory(event.target.value)} className="input flex-1 sm:flex-none sm:w-40">
+            {Object.entries(categories).map(([value, label]) => <option key={value} value={value}>{label}{value === 'favorites' ? ` (${favoriteCount})` : ''}</option>)}
           </select>
-
-          <div className="flex items-center gap-3">
-            <span className="text-sm text-gray-600 dark:text-gray-400">
-              共 {filteredBuiltInIcons.length + filteredCustomIcons.length} 个
-            </span>
-            {favorites.length > 0 && (
-              <button
-                aria-label="收藏图标"
-                onClick={() => setSelectedCategory('favorites')}
-                className={cn(
-                  "px-3 py-2 text-sm rounded-lg transition-colors flex items-center gap-1.5",
-                  selectedCategory === 'favorites'
-                    ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200"
-                    : "bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
-                )}
-              >
-                <Star className="h-4 w-4" />
-                {favorites.length}
-              </button>
-            )}
-          </div>
+          <span role="status" className="text-sm text-gray-500 dark:text-gray-400 whitespace-nowrap">{query.isFetching && !query.data ? '加载中…' : `${filtered.length} 个`}</span>
         </div>
       </div>
+    </div>
 
-      {/* 图标网格 */}
-      <div className="py-4 space-y-6">
-
-        {/* 本地图标库部分 */}
-        {filteredCustomIcons.length > 0 && (
-          <div>
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 px-1 flex items-center gap-2">
-              <span className="w-1 h-5 bg-primary-500 rounded-full"></span>
-              本地图标库
-              <span className="text-sm font-normal text-gray-500 ml-2">({filteredCustomIcons.length})</span>
-            </h3>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-              {filteredCustomIcons.map(([name, url]) => (
-                <div
-                  key={name}
-                  className="group cursor-pointer"
-                  onClick={() => setSelectedIcon({ name, url })}
-                >
-                  <div className="card p-4 rounded-2xl hover:shadow-lg transition-all h-full flex flex-col items-center justify-center bg-blue-50/50 dark:bg-blue-900/10 border-blue-100 dark:border-blue-800">
-                    <div className="relative w-full mb-3">
-                      <DeviceImage
-                        src={url}
-                        alt={name}
-                        className="w-12 h-12 mx-auto object-contain rounded-lg"
-                        onError={(e) => {
-                          e.target.src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHZpZXdCb3g9IjAgMCA2NCA2NCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iOCIgZmlsbD0iI0YzRjRGNiIvPgo8cGF0aCBkPSJNMzIgMTZMNDEgMzBIMzFWMzVIMzFWMzBIMjNMMzIgMTZaIiBmaWxsPSIjOUNBM0FGIi8+Cjwvc3ZnPgo='
-                        }}
-                      />
-                      <button
-                        aria-label={`${favorites.includes(name) ? '取消收藏' : '收藏'} ${name}`}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          toggleFavorite(name)
-                        }}
-                        className="btn-icon-secondary absolute -top-1 -right-1 rounded-full bg-white dark:bg-gray-800 shadow-md sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"
-                      >
-                        <Star
-                          className={cn(
-                            "h-4 w-4",
-                            favorites.includes(name)
-                              ? "text-yellow-500 fill-current"
-                              : "text-gray-300 hover:text-yellow-500"
-                          )}
-                        />
-                      </button>
-                    </div>
-
-                    <div className="text-center w-full">
-                      <p className="text-xs font-medium text-gray-700 dark:text-gray-300 truncate" title={name}>
-                        {name}
-                      </p>
-                    </div>
-
-                    <div className="flex items-center justify-center gap-2 mt-3 pt-3 border-t border-gray-100 dark:border-gray-700 w-full sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 transition-opacity">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          copyToClipboard(url, name)
-                        }}
-                        className="btn-icon-secondary"
-                        title={url.startsWith('/src/config/image/') ? '复制图像数据链接' : '复制链接'}
-                      >
-                        {copiedIcon === name ? (
-                          <Check className="h-4 w-4 text-green-500" />
-                        ) : (
-                          <Copy className="h-4 w-4" />
-                        )}
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          openIcon(url)
-                        }}
-                        className="btn-icon-secondary"
-                        title="查看原图"
-                      >
-                        <Eye className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* 内置图标库部分 */}
-        {filteredBuiltInIcons.length > 0 && (
-          <div>
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 px-1 flex items-center gap-2">
-              <span className="w-1 h-5 bg-gray-500 rounded-full"></span>
-              内置图标库
-              <span className="text-sm font-normal text-gray-500 ml-2">({filteredBuiltInIcons.length})</span>
-            </h3>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-              {filteredBuiltInIcons.map(([name, url]) => (
-                <div
-                  key={name}
-                  className="group cursor-pointer"
-                  onClick={() => setSelectedIcon({ name, url })}
-                >
-                  <div className="card p-4 rounded-2xl hover:shadow-lg transition-all h-full flex flex-col items-center justify-center">
-                    <div className="relative w-full mb-3">
-                      <DeviceImage
-                        src={url}
-                        alt={name}
-                        className="w-12 h-12 mx-auto object-contain rounded-lg"
-                        onError={(e) => {
-                          e.target.src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHZpZXdCb3g9IjAgMCA2NCA2NCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iOCIgZmlsbD0iI0YzRjRGNiIvPgo8cGF0aCBkPSJNMzIgMTZMNDEgMzBIMzNWMzhIMzFWMzBIMjNMMzIgMTZaIiBmaWxsPSIjOUNBM0FGIi8+Cjwvc3ZnPgo='
-                        }}
-                      />
-                      <button
-                        aria-label={`${favorites.includes(name) ? '取消收藏' : '收藏'} ${name}`}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          toggleFavorite(name)
-                        }}
-                        className="btn-icon-secondary absolute -top-1 -right-1 rounded-full bg-white dark:bg-gray-800 shadow-md sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"
-                      >
-                        <Star
-                          className={cn(
-                            "h-4 w-4",
-                            favorites.includes(name)
-                              ? "text-yellow-500 fill-current"
-                              : "text-gray-300 hover:text-yellow-500"
-                          )}
-                        />
-                      </button>
-                    </div>
-
-                    <div className="text-center w-full">
-                      <p className="text-xs font-medium text-gray-700 dark:text-gray-300 truncate" title={name}>
-                        {name}
-                      </p>
-                    </div>
-
-                    <div className="flex items-center justify-center gap-2 mt-3 pt-3 border-t border-gray-100 dark:border-gray-700 w-full sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 transition-opacity">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          copyToClipboard(url, name)
-                        }}
-                        className="btn-icon-secondary"
-                        title={url.startsWith('/src/config/image/') ? '复制图像数据链接' : '复制链接'}
-                      >
-                        {copiedIcon === name ? (
-                          <Check className="h-4 w-4 text-green-500" />
-                        ) : (
-                          <Copy className="h-4 w-4" />
-                        )}
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          openIcon(url)
-                        }}
-                        className="btn-icon-secondary"
-                        title="查看原图"
-                      >
-                        <Eye className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* 无结果提示 */}
-        {filteredCustomIcons.length === 0 && filteredBuiltInIcons.length === 0 && (
-          <div className="text-center py-12">
-            <div className="h-16 w-16 bg-gray-100 dark:bg-gray-700 rounded-full flex items-center justify-center mx-auto mb-4">
-              <Search className="h-8 w-8 text-gray-400" />
-            </div>
-            <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
-              没有找到图标
-            </h3>
-            <p className="text-gray-500 dark:text-gray-400">
-              尝试调整搜索词或分类
-            </p>
-          </div>
-        )}
-      </div>
-      {/* 图标详情弹窗 */}
-      {selectedIcon && (
-        <div className="modal-viewport bg-black bg-opacity-50 z-50">
-          <div role="dialog" aria-modal="true" aria-label="图标详情" className="modal-panel bg-white dark:bg-gray-800 rounded-2xl shadow-xl max-w-2xl w-full">
-            <div className="p-6">
-              <div className="flex justify-between items-start mb-4">
-                <h3 className="text-xl font-semibold text-gray-900 dark:text-white">
-                  图标详情
-                </h3>
-                <button
-                  onClick={() => setSelectedIcon(null)}
-                  aria-label="关闭图标详情"
-                  className="btn-icon-secondary"
-                >
-                  <X className="h-6 w-6" />
+    <div className="py-4 space-y-6">
+      {['custom', 'builtin'].map(source => {
+        const group = filtered.filter(entry => entry.source === source)
+        if (!group.length) return null
+        return <section key={source} aria-label={categories[source]}>
+          <h3 className="font-semibold mb-3">{categories[source]}</h3>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4">
+            {group.map(entry => {
+              const id = iconId(entry)
+              const favorite = favorites.includes(id)
+              return <article key={id} className="card p-3 sm:p-4 rounded-2xl flex flex-col min-w-0">
+                <button type="button" aria-label={`查看${categories[source]} ${entry.name}`} className="flex-1 min-w-0 w-full rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500" onClick={event => { selectedTrigger.current = event.currentTarget; setError(''); setSelected(entry) }}>
+                  <DeviceImage src={entry.url} alt={entry.name} className="w-12 h-12 mx-auto object-contain rounded-lg" />
+                  <span className="block text-xs font-medium truncate mt-3 text-gray-700 dark:text-gray-300" title={entry.name}>{entry.name}</span>
                 </button>
-              </div>
-
-              <div className="space-y-4">
-                <div className="flex justify-center">
-                  <DeviceImage
-                    src={selectedIcon.url}
-                    alt={selectedIcon.name}
-                    className="w-32 h-32 object-contain rounded-lg border border-gray-200 dark:border-gray-700"
-                  />
+                <div className="flex justify-between mt-3 pt-2 border-t border-gray-100 dark:border-gray-700">
+                  <button type="button" aria-label={`${favorite ? '取消收藏' : '收藏'}${categories[source]} ${entry.name}`} title={favorite ? '取消收藏' : '收藏'} aria-pressed={favorite} onClick={() => toggleFavorite(entry)} className="btn-icon-secondary"><Star className={cn('h-4 w-4', favorite && 'text-yellow-500 fill-current')} /></button>
+                  <button type="button" aria-label={`复制 ${entry.name}`} title={copied === id ? '已复制' : '复制链接'} onClick={() => copyIcon(entry)} className="btn-icon-secondary">{copied === id ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}</button>
                 </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    图标名称
-                  </label>
-                  <div className="p-3 bg-gray-50 dark:bg-gray-700 rounded-lg text-gray-900 dark:text-white font-medium">
-                    {selectedIcon.name}
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    图标链接
-                  </label>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={selectedIcon.url}
-                      readOnly
-                      className="flex-1 min-w-0 p-3 bg-gray-50 dark:bg-gray-700 rounded-lg text-gray-900 dark:text-white font-mono text-sm border border-gray-200 dark:border-gray-600"
-                    />
-                    <button
-                      onClick={() => copyToClipboard(selectedIcon.url, selectedIcon.name)}
-                      className="btn-primary px-4 py-3 gap-2 flex-shrink-0"
-                    >
-                      {copiedIcon === selectedIcon.name ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-                      {copiedIcon === selectedIcon.name ? '已复制' : '复制'}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="flex gap-3 pt-4">
-                  <button
-                    onClick={() => openIcon(selectedIcon.url)}
-                    className="btn-secondary flex-1"
-                  >
-                    在新窗口打开
-                  </button>
-                  <button
-                    onClick={() => {
-                      toggleFavorite(selectedIcon.name)
-                      setSelectedIcon(null)
-                    }}
-                    className={cn(
-                      "btn flex-1",
-                      favorites.includes(selectedIcon.name)
-                        ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200 hover:bg-yellow-200 dark:hover:bg-yellow-800"
-                        : "bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600"
-                    )}
-                  >
-                    {favorites.includes(selectedIcon.name) ? '取消收藏' : '添加收藏'}
-                  </button>
-                </div>
-              </div>
-            </div>
+              </article>
+            })}
           </div>
+        </section>
+      })}
+      {!filtered.length && <div className="text-center py-12 text-gray-500 dark:text-gray-400">
+        {resultLoading ? <RefreshCw className="h-10 w-10 mx-auto mb-3 animate-spin" /> : category === 'favorites' && !term ? <Star className="h-10 w-10 mx-auto mb-3" /> : <Search className="h-10 w-10 mx-auto mb-3" />}
+        <h3 className="text-sm font-medium text-gray-900 dark:text-white" role={resultLoading ? 'status' : undefined}>{resultLoading ? '加载中…' : query.isError && category === 'custom' ? '自定义图标读取失败' : term ? '没有找到图标' : category === 'favorites' ? '暂无收藏' : '暂无自定义图标'}</h3>
+        {!resultLoading && <div className="flex flex-wrap items-center justify-center gap-3 mt-4">
+          {category === 'custom' && !term && (query.isError
+            ? <button type="button" className="btn-primary" disabled={query.isFetching} onClick={() => query.refetch()}>重试</button>
+            : <button type="button" className="btn-primary gap-2" onClick={() => startUpload(null)}><Upload className="h-4 w-4" />上传图标</button>)}
+          <button type="button" className="btn-secondary" onClick={() => { setSearchTerm(''); setCategory('all') }}>查看全部</button>
+        </div>}
+      </div>}
+    </div>
+
+    {selected && <Dialog title="图标详情" onClose={pending ? undefined : () => { setSelected(null); setError('') }}>
+      <div className="p-6 space-y-4">
+        <Notice onClose={() => setError('')}>{error}</Notice>
+        {selectedAsset.isError && <Notice>图片读取失败：{selectedAsset.error.message} <button type="button" className="underline" disabled={selectedAsset.isFetching} onClick={() => selectedAsset.refetch()}>重试</button></Notice>}
+        <div className="flex items-center gap-3">
+          <DeviceImage eager src={selected.url} alt={selected.name} className="w-16 h-16 flex-shrink-0 object-contain rounded-xl" />
+          <div className="min-w-0 flex-1"><p className="font-medium break-all">{selected.name}</p><p className="text-sm text-gray-500 dark:text-gray-400 mt-1">{selected.source === 'custom' ? `自定义 · ${query.deviceName}` : '内置'}</p></div>
+          <button type="button" aria-label={favorites.includes(iconId(selected)) ? '取消收藏' : '添加收藏'} title={favorites.includes(iconId(selected)) ? '取消收藏' : '添加收藏'} aria-pressed={favorites.includes(iconId(selected))} onClick={() => toggleFavorite(selected)} className="btn-icon-secondary flex-shrink-0"><Star className={cn('h-5 w-5', favorites.includes(iconId(selected)) && 'text-yellow-500 fill-current')} /></button>
         </div>
-      )}
-    </SettingsPanel>
-  )
+        <div><label htmlFor="icon-link" className="text-sm font-medium block mb-2">图标链接</label><div className="flex gap-2">
+          <input id="icon-link" readOnly value={iconFilename(selected.url) !== null ? imageAPI.iconURL(iconFilename(selected.url)) : new URL(selected.url, window.location.href).href} onFocus={event => event.target.select()} className="input flex-1 min-w-0 text-sm" />
+          <button type="button" className="btn-secondary flex-shrink-0 gap-2" onClick={() => copyIcon(selected)}>{copied === iconId(selected) ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}{copied === iconId(selected) ? '已复制' : '复制'}</button>
+        </div></div>
+        <div className="flex flex-wrap gap-x-4 gap-y-1">
+          <button type="button" className="inline-flex items-center gap-1.5 min-h-[44px] text-sm text-primary-600 dark:text-primary-400 hover:underline" onClick={() => openIcon(selected)}><Eye className="h-4 w-4" />查看原图</button>
+          {selected.source === 'custom' && <button type="button" className="inline-flex items-center gap-1.5 min-h-[44px] text-sm text-primary-600 dark:text-primary-400 hover:underline" onClick={() => copyIcon(selected, true)}>{copied === `data:${iconId(selected)}` ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}{copied === `data:${iconId(selected)}` ? '已复制数据链接' : '复制数据链接'}</button>}
+        </div>
+      </div>
+      <div className="px-6 py-4 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700/30 flex items-center justify-between gap-3">
+        {selected.source === 'custom' && <button type="button" disabled={pending} className="btn-secondary text-red-600 dark:text-red-400 gap-2 disabled:opacity-50" onClick={() => deleteIcon(selected)}><Trash2 className="h-4 w-4" />{pending ? '删除中…' : '删除'}</button>}
+        <button type="button" disabled={pending} className="btn-primary gap-2 ml-auto disabled:opacity-50" onClick={() => startUpload(selected)}><Upload className="h-4 w-4" />{selected.source === 'custom' ? '替换图标' : '自定义图标'}</button>
+      </div>
+    </Dialog>}
+
+    {uploadTarget !== null && <Dialog title={uploadTarget ? '替换图标' : '上传图标'} onClose={pending ? undefined : () => { setUploadTarget(null); setError('') }}>
+      <form onSubmit={submitUpload}>
+        <div className="p-6 space-y-4">
+          <Notice>{error}</Notice>
+          <dl className="flex items-center justify-between gap-3 text-sm"><dt className="text-gray-500 dark:text-gray-400">设备</dt><dd className="font-medium truncate" title={query.deviceName}>{query.deviceName}</dd></dl>
+          <div><div className="flex items-center justify-between gap-3 mb-2"><label htmlFor="icon-image-name" className="text-sm font-medium">镜像仓库</label><span className="text-xs text-gray-500 dark:text-gray-400">全部标签</span></div><input id="icon-image-name" data-autofocus required disabled={pending} readOnly={!!uploadTarget} value={uploadName} onChange={event => setUploadName(event.target.value)} placeholder="redis 或 team/app" className="input disabled:opacity-50" /></div>
+          <div><label htmlFor="icon-upload-file" className="block text-sm font-medium mb-2">图标文件</label><input id="icon-upload-file" type="file" required disabled={pending} accept={ICON_ACCEPT} aria-describedby="icon-file-format" onChange={event => setUploadFile(event.target.files[0] || null)} className="block w-full min-w-0 text-sm disabled:opacity-50 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-gray-100 dark:file:bg-gray-700 file:text-gray-700 dark:file:text-gray-200" /><p id="icon-file-format" className="mt-2 text-xs text-gray-500 dark:text-gray-400">PNG、JPEG、WebP、GIF · 最大 2 MiB</p></div>
+        </div>
+        <div className="px-6 py-4 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700/30 flex justify-end gap-3"><button type="button" disabled={pending} className="btn-secondary disabled:opacity-50" onClick={() => { setUploadTarget(null); setError('') }}>取消</button><button type="submit" disabled={pending} className="btn-primary disabled:opacity-50">{pending ? '上传中…' : uploadTarget ? '替换' : '上传'}</button></div>
+      </form>
+    </Dialog>}
+
+    {manualCopy !== null && <Dialog title="手动复制" onClose={() => setManualCopy(null)}>
+      <div className="p-6 space-y-3"><p className="text-sm text-gray-500 dark:text-gray-400">{manualCopy.reason}</p><textarea aria-label="待复制的图标链接" data-autofocus readOnly value={manualCopy.link} onFocus={event => event.target.select()} className="input h-32 text-sm font-mono" /></div>
+    </Dialog>}
+  </SettingsPanel>
 }

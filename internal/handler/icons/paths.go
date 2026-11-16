@@ -1,6 +1,12 @@
 package icons
 
+import (
+	"path/filepath"
+
+	"github.com/onlyLTY/dockerCopilot/internal/node"
+)
+
 var (
-	imageUploadDir = "/data/config/image"
-	imageLogosPath = "/data/config/imageLogos.js"
+	imageUploadDir = filepath.Join(node.DataDir(), "config", "image")
+	imageLogosPath = filepath.Join(node.DataDir(), "config", "imageLogos.js")
 )

@@ -1,14 +1,16 @@
 import { DeviceImage } from './DeviceImage.jsx'
 import React, { useState, useEffect } from 'react'
-import { useQuery } from '@tanstack/react-query'
 import { HardDrive, Trash2, RefreshCw, Link, BrushCleaning, X, AlertCircle, CheckCircle } from 'lucide-react'
 import { useDeviceAPI } from '../hooks/useDevice.jsx'
 import { cn } from '../utils/cn.js'
 import { getImageLogo } from '../config/imageLogos.js'
+import { useIcons } from '../hooks/useIcons.js'
+import { Notice } from './ManagementUI.jsx'
 
 // 安全的图片组件
 function SafeImage({ src, alt, className, fallback }) {
   const [hasError, setHasError] = React.useState(false)
+  React.useEffect(() => setHasError(false), [src])
 
   if (hasError || !src) {
     return fallback
@@ -25,7 +27,7 @@ function SafeImage({ src, alt, className, fallback }) {
 }
 
 export function Images() {
-  const { deviceId, imageAPI } = useDeviceAPI()
+  const { imageAPI } = useDeviceAPI()
   const [images, setImages] = useState([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -36,35 +38,8 @@ export function Images() {
   const [successModal, setSuccessModal] = useState({ isOpen: false, message: '' })
 
   // 获取自定义图标配置
-  const { data: customIcons = {} } = useQuery({
-    queryKey: [deviceId, 'customIcons'],
-    queryFn: async () => {
-      try {
-        const response = await imageAPI.getIcons()
-        if (response.data.code === 200 || response.data.code === 0) {
-          const icons = response.data.data || {}
-          // update localStorage
-          localStorage.setItem(`docker_copilot_image_logos:${deviceId}`, JSON.stringify(icons))
-          return icons
-        }
-      } catch (err) {
-        console.error('获取图标失败:', err)
-      }
-      return {}
-    },
-    // 初始数据尝试从localStorage获取
-    initialData: () => {
-      const saved = localStorage.getItem(`docker_copilot_image_logos:${deviceId}`)
-      if (saved) {
-        try {
-          return JSON.parse(saved)
-        } catch (e) {
-          console.error('解析本地图标配置失败:', e)
-        }
-      }
-      return undefined
-    }
-  })
+  const iconQuery = useIcons()
+  const customIcons = iconQuery.icons
 
   const fetchImages = async (options = {}) => {
     try {
@@ -165,6 +140,7 @@ export function Images() {
 
   return (
     <div className="max-w-7xl mx-auto">
+      {iconQuery.isError && <div className="px-2 sm:px-6 pt-4"><Notice>图标读取失败：{iconQuery.error.message} <button type="button" className="underline" onClick={() => iconQuery.refetch()}>重试</button></Notice></div>}
       {/* 页面头部 */}
       <div className="px-2 sm:px-6 py-4 pt-4 sm:pt-4">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center space-y-4 sm:space-y-0">
@@ -396,7 +372,7 @@ export function Images() {
                   <div className="flex items-start gap-3 mb-4">
                     <div className="h-10 w-10 bg-gray-100 dark:bg-gray-700 rounded-lg flex items-center justify-center flex-shrink-0 overflow-hidden">
                       <SafeImage
-                        src={getImageLogo(image.name, customIcons)}
+                        src={getImageLogo(`${image.name}:${image.tag}`, customIcons)}
                         alt={image.name}
                         className="h-10 w-10 object-cover"
                         fallback={<HardDrive className="h-5 w-5 text-gray-500 dark:text-gray-400" />}
@@ -506,7 +482,7 @@ export function Images() {
                   <div key={img.id} className="flex items-center gap-3 p-3 bg-white dark:bg-gray-700 rounded-xl hover:shadow-md transition-all duration-200">
                     <div className="h-8 w-8 bg-gray-200 dark:bg-gray-600 rounded-lg flex items-center justify-center flex-shrink-0 overflow-hidden">
                       <SafeImage
-                        src={getImageLogo(img.name, customIcons)}
+                        src={getImageLogo(`${img.name}:${img.tag}`, customIcons)}
                         alt={img.name}
                         className="h-8 w-8 object-cover"
                         fallback={<HardDrive className="h-4 w-4 text-gray-500 dark:text-gray-400" />}

@@ -1,69 +1,52 @@
 package icons
 
 import (
-	"fmt"
 	"net/http"
-	"os"
-	"regexp"
 
 	"github.com/onlyLTY/dockerCopilot/internal/svc"
 	"github.com/onlyLTY/dockerCopilot/internal/types"
-	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/rest/httpx"
 )
 
 func ObtainHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		jsPath := "/data/config/imageLogos.js"
-		logx.Infof("Reading icons from: %s", jsPath)
-
-		contentBytes, err := os.ReadFile(jsPath)
+		values, err := loadIcons()
 		if err != nil {
-			if os.IsNotExist(err) {
-				logx.Info("Config file does not exist, returning empty.")
-				httpx.OkJsonCtx(r.Context(), w, types.Resp{
-					Code: 200,
-					Msg:  "Success",
-					Data: "{}",
-				})
-				return
-			}
-			logx.Errorf("Error reading config: %v", err)
-			httpx.ErrorCtx(r.Context(), w, fmt.Errorf("failed to read config: %v", err))
+			writeUploadError(w, 500, err.Error())
 			return
 		}
-
-		content := string(contentBytes)
-		// fmt.Printf("Config content: %s\n", content) // Uncomment for deep debug
-
-		// 改进的正则表达式：匹配 "key": "value"，允许一定的格式变化
-		// 使用反引号表示原始字符串。
-		re := regexp.MustCompile(`"([^"]+)"\s*:\s*"([^"]+)"`)
-		matches := re.FindAllStringSubmatch(content, -1)
-
-		icons := make(map[string]string)
-		for _, match := range matches {
-			if len(match) == 3 {
-				key := match[1]
-				val := match[2]
-				icons[key] = val
-				// fmt.Printf("Found icon: %s -> %s\n", key, val)
-			}
-		}
-
-		logx.Infof("Total icons found: %d", len(icons))
-
-		response := struct {
-			Code int               `json:"code"`
-			Msg  string            `json:"msg"`
-			Data map[string]string `json:"data"`
-		}{
-			Code: 200,
-			Msg:  "Success",
-			Data: icons,
-		}
-
-		httpx.OkJsonCtx(r.Context(), w, response)
+		httpx.OkJsonCtx(r.Context(), w, types.Resp{Code: 200, Msg: "图标读取成功", Data: values})
 	}
+}
 
+func DeleteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		repository, err := normalizeRepository(r.URL.Query().Get("imageName"))
+		if err != nil {
+			writeUploadError(w, 400, err.Error())
+			return
+		}
+		warning, err := changeIcon(repository, "")
+		if err != nil {
+			writeUploadError(w, 500, err.Error())
+			return
+		}
+		message := "自定义图标已删除，该镜像仓库的全部标签已恢复默认图标"
+		if warning != "" {
+			message = warning
+		}
+		httpx.OkJsonCtx(r.Context(), w, types.Resp{Code: 200, Msg: message, Data: map[string]string{}})
+	}
+}
+
+func FileHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		path, err := iconFilePath(r.URL.Query().Get("name"))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		http.ServeFile(w, r, path)
+	}
 }

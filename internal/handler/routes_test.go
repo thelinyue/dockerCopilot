@@ -38,6 +38,7 @@ func TestProgressRouteRequiresJWT(t *testing.T) {
 		{"GET", "/progress/test-task"}, {"GET", "/node/info"}, {"GET", "/settings"}, {"PUT", "/settings"},
 		{"GET", "/tasks"}, {"POST", "/checks"}, {"POST", "/auto-update"},
 		{"POST", "/image/prune"},
+		{"GET", "/icons"}, {"POST", "/icons"}, {"DELETE", "/icons?imageName=redis"},
 		{"GET", "/compose/projects"}, {"POST", "/compose/projects"}, {"GET", "/compose/projects/test/files/0"}, {"PUT", "/compose/projects/test/files/0"}, {"POST", "/compose/projects/test/actions"},
 		{"POST", "/compose/projects/test/files/0/validate"},
 		{"GET", "/devices"}, {"POST", "/devices"}, {"PUT", "/devices/test"}, {"DELETE", "/devices/test"}, {"POST", "/devices/test/test"}, {"GET", "/icon-file?name=test.png"},

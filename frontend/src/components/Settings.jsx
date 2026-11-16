@@ -19,8 +19,7 @@ export function Settings({ section, onSectionChange, onDirty }) {
   const { data: devices = [] } = useQuery({ queryKey: ['devices'], queryFn: deviceAPI.list })
   const deviceName = deviceId === 'local' ? '本机' : devices.find(device => device.id === deviceId)?.name || '设备不可用'
   const scope = section === 'devices' ? '主端接入列表'
-    : section === 'icons' ? `自定义图标来自：${deviceName}`
-      : section === 'automation' ? `当前设备：${deviceName}` : ''
+    : section === 'icons' || section === 'automation' ? `当前设备：${deviceName}` : ''
 
   const select = async id => {
     const accepted = await onSectionChange(id)

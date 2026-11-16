@@ -147,6 +147,8 @@ export function createDeviceAPI(deviceId = 'local') {
   const imageAPI = {
     getImages: () => scopedClient.get('/api/images'),
     getIcons: () => scopedClient.get('/api/icons'),
+    iconURL: (filename) => new URL(`/icons/${encodeURIComponent(deviceId)}/${encodeURIComponent(filename)}`, API_BASE_URL).href,
+    deleteIcon: (imageName) => scopedClient.delete(`/api/icons?imageName=${encodeURIComponent(imageName)}`),
     pruneImages: (type) => scopedClient.post('/api/image/prune', { type }, { timeout: 120000 }),
     deleteImage: (id, force = false) => scopedClient.delete(`/api/image/${id}?force=${force}`),
     uploadIcon: (file, imageName, containerName) => {
