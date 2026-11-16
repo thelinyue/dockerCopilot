@@ -79,6 +79,7 @@ go test ./...
 
 ```sh
 go test ./...
+npm --prefix frontend test
 go test -race ./internal/node ./internal/module ./internal/svc ./internal/management ./internal/handler ./internal/utiles
 npm --prefix frontend run build -- --outDir ../front
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/dockerCopilot-amd64 .
