@@ -1,8 +1,5 @@
 import React from 'react'
-import { useQuery } from '@tanstack/react-query'
 import { Clock, Network, Box, Bell } from 'lucide-react'
-import { deviceAPI } from '../api/client.js'
-import { useDeviceAPI } from '../hooks/useDevice.jsx'
 import { cn } from '../utils/cn.js'
 import { Automation } from './Automation.jsx'
 import { Devices } from './Devices.jsx'
@@ -16,12 +13,8 @@ const sections = [
   { id: 'icons', label: '图标库', shortLabel: '图标', icon: Box },
 ]
 
-export function Settings({ section, onSectionChange, onDirty }) {
-  const { deviceId } = useDeviceAPI()
-  const { data: devices = [] } = useQuery({ queryKey: ['devices'], queryFn: deviceAPI.list })
-  const deviceName = deviceId === 'local' ? '本机' : devices.find(device => device.id === deviceId)?.name || '设备不可用'
-  const scope = section === 'devices' ? '主端接入列表'
-    : `当前设备：${deviceName}`
+export function Settings({ section, onSectionChange, onDirty, beforeLeave }) {
+  const scope = section === 'devices' ? '主端接入列表' : undefined
 
   const select = async id => {
     const accepted = await onSectionChange(id)
@@ -59,8 +52,8 @@ export function Settings({ section, onSectionChange, onDirty }) {
   const layout = { navigation, scope, section }
 
   return <div className="max-w-7xl mx-auto px-2 sm:px-6 py-2 sm:py-4 text-gray-900 dark:text-gray-100">
-    {section === 'automation' && <Automation layout={layout} onDirty={onDirty} />}
-    {section === 'notifications' && <Notifications layout={layout} onDirty={onDirty} />}
+    {section === 'automation' && <Automation layout={layout} onDirty={onDirty} beforeLeave={beforeLeave} />}
+    {section === 'notifications' && <Notifications layout={layout} onDirty={onDirty} beforeLeave={beforeLeave} />}
     {section === 'devices' && <Devices layout={layout} />}
     {section === 'icons' && <Icons layout={layout} />}
   </div>

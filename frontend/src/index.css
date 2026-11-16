@@ -5,6 +5,8 @@
 @layer base {
   html {
     font-family: 'Inter', system-ui, sans-serif;
+    /* 弹窗锁定背景滚动时保留滚动条占位，避免内容区突然变宽。 */
+    scrollbar-gutter: stable;
     --safe-area-top: env(safe-area-inset-top, 0px);
     --safe-area-bottom: env(safe-area-inset-bottom, 0px);
     --safe-area-left: env(safe-area-inset-left, 0px);

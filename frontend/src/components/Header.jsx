@@ -12,7 +12,7 @@ import { Dialog } from './ManagementUI.jsx'
 import { ThemeToggle } from './ThemeToggle.jsx'
 import { UpdatePrompt } from './UpdatePrompt.jsx'
 import { cn } from '../utils/cn.js'
-import logoImg from '../assets/DockerCopilot-logo.png'
+import logoImg from '../assets/DockerCopilot-mark.svg'
 import { useVersionCheck } from '../hooks/useVersionCheck.js'
 
 const navItems = [
@@ -116,7 +116,7 @@ export function Sidebar({ activeTab, onTabChange, onLogout, isCollapsed = false,
       {isMobileSize && (
         <div className="mobile-header fixed top-0 left-0 right-0 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between z-40 shadow-sm">
           <div className="flex items-center gap-1 min-w-0 flex-1 mr-1">
-            <img src={logoImg} alt="Docker Copilot" className="h-7 w-7 flex-shrink-0 rounded-lg object-cover" />
+            <img src={logoImg} alt="Docker Copilot" className="h-8 w-8 flex-shrink-0 object-contain" />
             <DeviceSelector deviceId={deviceId} onChange={onDeviceChange} onManageDevices={onManageDevices} mobile />
           </div>
           <div className="flex items-center flex-shrink-0">
@@ -176,12 +176,12 @@ export function Sidebar({ activeTab, onTabChange, onLogout, isCollapsed = false,
                   <img
                     src={logoImg}
                     alt="Docker Copilot"
-                    className="h-9 w-9 sm:h-11 sm:w-11 rounded-xl object-cover shadow-md group-hover:shadow-lg group-hover:scale-110 transition-all duration-200 border-0"
+                    className="h-9 w-9 sm:h-11 sm:w-11 object-contain group-hover:scale-110 transition-transform duration-200"
                   />
                 </div>
                 {!isCollapsed && (
                   <div className="text-left transition-all duration-300 min-w-0 flex-1">
-                    <h1 className="text-base sm:text-lg font-bold text-gray-900 dark:text-white">Docker Copilot</h1>
+                    <h1 className="text-sm sm:text-lg font-bold text-gray-900 dark:text-white">Docker Copilot</h1>
                     <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">容器管理平台</p>
                   </div>
                 )}

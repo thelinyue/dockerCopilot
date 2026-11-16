@@ -1,7 +1,8 @@
 import React, { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { AlertCircle, CheckCircle, X } from 'lucide-react'
+import { AlertCircle, CheckCircle, Clock, LoaderCircle, RotateCw, X } from 'lucide-react'
 import { cn } from '../utils/cn.js'
+import { settingsErrorTarget } from '../utils/settings.js'
 
 export function PageHeader({ title, children }) {
   return (
@@ -13,18 +14,53 @@ export function PageHeader({ title, children }) {
 }
 
 // 四个设置面板共用页头和分类导航，操作仍由各面板持有，避免重复标题和额外留白。
-export function SettingsPanel({ navigation, scope, section, actions, children }) {
+export function SettingsPanel({ navigation, scope, section, status, actions, children }) {
   return <>
     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
-      <div className="flex items-center gap-3 min-w-0">
-        <h2 className="text-2xl font-bold flex-shrink-0">设置</h2>
-        {scope && <span className="min-w-0 truncate text-xs sm:text-sm text-gray-500 dark:text-gray-400" title={scope}>{scope}</span>}
+      <div className="flex flex-1 items-center justify-between gap-3 min-w-0">
+        <div className="flex items-center gap-3 min-w-0">
+          <h2 className="text-2xl font-bold flex-shrink-0">设置</h2>
+          {scope && <span className="min-w-0 truncate text-xs sm:text-sm text-gray-500 dark:text-gray-400" title={scope}>{scope}</span>}
+        </div>
+        {status && <div className="flex-shrink-0 whitespace-nowrap">{status}</div>}
       </div>
       {actions && <div className="flex flex-wrap items-center gap-2 flex-shrink-0">{actions}</div>}
     </div>
     {navigation}
     <div id="settings-panel" role="tabpanel" aria-labelledby={`settings-tab-${section}`}>{children}</div>
   </>
+}
+
+export function AutosaveStatus({ autosave }) {
+  const failed = autosave.errors.length > 0
+  const Icon = autosave.saving ? LoaderCircle : failed ? AlertCircle : autosave.dirty ? Clock : autosave.didSave ? CheckCircle : null
+  return <span role="status" aria-live="polite" className={cn(
+    'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium',
+    autosave.saving ? 'border-primary-100 bg-primary-50 text-primary-700 dark:border-primary-800 dark:bg-primary-900/20 dark:text-primary-300'
+      : failed ? 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-300'
+        : 'border-gray-200 bg-white text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400'
+  )}>
+    {Icon && <Icon aria-hidden="true" className={cn('h-3.5 w-3.5 flex-shrink-0', autosave.saving && 'animate-spin motion-reduce:animate-none', !autosave.saving && !failed && !autosave.dirty && 'text-green-600 dark:text-green-400')} />}
+    {autosave.saving ? '保存中…' : failed ? '保存失败' : autosave.dirty ? '等待自动保存…' : autosave.didSave ? '已保存' : '修改后自动保存'}
+  </span>
+}
+
+export function AutosaveFeedback({ autosave, target, fields = [], id }) {
+  const errors = autosave.errors.filter(error => target
+    ? settingsErrorTarget(error) === target
+    : !fields.includes(settingsErrorTarget(error)))
+  if (!errors.length) return null
+  return <div id={id} role="alert" className={cn(
+    'flex items-start gap-2 text-sm',
+    target ? 'text-red-600 dark:text-red-400' : 'rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-4 py-3'
+  )}>
+    <AlertCircle aria-hidden="true" className={cn('h-4 w-4 flex-shrink-0 mt-1', !target && 'text-amber-600 dark:text-amber-400')} />
+    <div className="min-w-0 flex-1 pt-0.5">
+      {!target && <p className="font-medium text-gray-900 dark:text-gray-100">部分设置未保存</p>}
+      <p className={cn('whitespace-pre-wrap break-words', !target && 'mt-1 text-gray-600 dark:text-gray-400')}>{[...new Set(errors.map(error => error.message))].join('\n')}</p>
+    </div>
+    <button type="button" disabled={autosave.saving} className="inline-flex items-center justify-center gap-1 flex-shrink-0 min-h-[44px] sm:min-h-8 px-2 rounded-lg text-xs font-medium text-primary-600 dark:text-primary-400 hover:bg-primary-50 dark:hover:bg-primary-900/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 disabled:opacity-50" onClick={() => { errors.forEach(error => { void autosave.retry(error.group) }) }}><RotateCw aria-hidden="true" className="h-3.5 w-3.5" />重试</button>
+  </div>
 }
 
 export function UpdateBadge() {

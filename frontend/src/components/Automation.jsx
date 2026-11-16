@@ -1,12 +1,13 @@
-import React, { useEffect, useState } from 'react'
+import React, { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { RefreshCw, Save, Clock, History, ShieldOff, Network, Play } from 'lucide-react'
+import { RefreshCw, Clock, History, ShieldOff, Network, Play } from 'lucide-react'
 import { useDeviceAPI } from '../hooks/useDevice.jsx'
-import { Notice, SettingsPanel, useConfirmation } from './ManagementUI.jsx'
+import { AutosaveFeedback, AutosaveStatus, Notice, SettingsPanel, useConfirmation } from './ManagementUI.jsx'
+import { useSettingsAutosave } from '../hooks/useSettingsAutosave.js'
 import { ExclusionSelect } from './ExclusionSelect.jsx'
 import { TaskHistoryDialog, TaskProgressDialog } from './Tasks.jsx'
 import { getExclusionOptions, changeExclusion } from '../utils/exclusions.js'
-import { automationFields, changedFields } from '../utils/settings.js'
+import { automationFields, applyAutomationPatch, settingsErrorTarget, validateProxyPatch } from '../utils/settings.js'
 
 const frequencies = [
   ['30 * * * *', '每小时第 30 分钟'],
@@ -36,87 +37,52 @@ const selectSettings = data => {
   }
 }
 
-export function Automation({ layout, onDirty }) {
+export function Automation({ layout, onDirty, beforeLeave }) {
   const { deviceId, managementAPI, containerAPI } = useDeviceAPI()
   const queryClient = useQueryClient()
   const confirm = useConfirmation()
-  const { data, error, isLoading } = useQuery({ queryKey: [deviceId, 'settings'], queryFn: managementAPI.settings, select: selectSettings })
+  const autosave = useSettingsAutosave({ select: selectSettings, encode: validateProxyPatch, apply: applyAutomationPatch, onDirty, beforeLeave })
+  const { data, error, isLoading, form, dirty } = autosave
   const { data: projectData, error: projectError, isLoading: projectsLoading } = useQuery({ queryKey: [deviceId, 'composeProjects'], queryFn: managementAPI.projects, retry: false })
   const { data: containers = [], error: containerError, isLoading: containersLoading } = useQuery({ queryKey: [deviceId, 'containers'], queryFn: async () => (await containerAPI.getContainers()).data.data || [], retry: false })
-  // 草稿独立于查询缓存，后台刷新不能覆盖尚未保存的输入。
-  const [draft, setDraft] = useState(null)
-  const form = draft || data?.settings
-  const dirty = !!draft && JSON.stringify(draft) !== JSON.stringify(data?.settings)
   const [custom, setCustom] = useState({})
   const [busy, setBusy] = useState(false)
-  const [message, setMessage] = useState('')
   const [failure, setFailure] = useState('')
   const [historyOpen, setHistoryOpen] = useState(false)
   const [task, setTask] = useState(null)
   const [progressOpen, setProgressOpen] = useState(false)
-  useEffect(() => {
-    onDirty(dirty)
-    if (!dirty) return
-    const stop = event => { event.preventDefault(); event.returnValue = '' }
-    window.addEventListener('beforeunload', stop)
-    return () => window.removeEventListener('beforeunload', stop)
-  }, [dirty, onDirty])
-  const change = (name, value) => setDraft(current => ({
-    ...(current || form), [name]: value,
+  const invalid = target => autosave.errors.some(error => settingsErrorTarget(error) === target)
+  const change = (name, value, delay = 0) => autosave.change(data.unified && (name === 'checkCron' || name === 'updateCron') ? 'schedule' : name, {
+    [name]: value,
     ...(data.unified && (name === 'checkCron' || name === 'updateCron') ? { checkCron: value, updateCron: value } : {}),
-  }))
+  }, delay)
   const act = async fn => {
     setBusy(true)
     setFailure('')
-    setMessage('')
     try { await fn(); await queryClient.invalidateQueries({ queryKey: [deviceId, 'tasks'] }) } catch (e) { setFailure(e.message) } finally { setBusy(false) }
-  }
-  const save = event => {
-    event.preventDefault()
-    act(async () => {
-      const settings = changedFields(data.settings, form, automationFields)
-      // 未改动的掩码不回传；编辑认证地址后必须重新填写密码，不能把掩码存成新密码。
-      for (const key of ['httpProxy', 'httpsProxy']) {
-        if (!(key in settings)) continue
-        else {
-          let password = ''
-          try { password = decodeURIComponent(new URL(settings[key]).password) } catch { /* 无效地址由服务端统一校验。 */ }
-          if (password === '********') throw new Error('代理地址包含密码掩码，修改代理时请重新填写完整地址和密码。')
-        }
-      }
-      await managementAPI.saveSettings(settings)
-      // 写入成功即可结束草稿；后续刷新负责取回代理掩码及下次执行时间。
-      queryClient.setQueryData([deviceId, 'settings'], current => ({ ...current, settings: { ...current.settings, ...settings } }))
-      setDraft(null)
-      await queryClient.invalidateQueries({ queryKey: [deviceId, 'settings'] })
-      setMessage('设置已保存')
-    })
   }
   const update = async () => {
     if (!await confirm({ title: '检测并更新', message: '立即检测更新，并按已保存的排除规则更新符合条件的容器和项目服务。项目服务已保存但未部署的配置也会应用。', confirmText: '开始检测并更新' })) return
     run('检测并更新', managementAPI.autoUpdate)
   }
   const run = (title, submit) => act(async () => {
+    if (!await autosave.flush()) throw new Error('部分设置尚未生效，请修正输入或重试保存后再执行。')
     const result = await submit()
     setTask({ taskID: result.taskID, title })
     setProgressOpen(true)
   })
   const exclusionOptions = getExclusionOptions(form || {}, containers, projectData?.projects || [])
-  const setExclusion = (option, selected) => setDraft(current => {
-    const settings = current || form
-    return { ...settings, ...changeExclusion(settings, option, selected) }
-  })
+  const setExclusion = (option, selected) => autosave.change('exclusions', changeExclusion(form, option, selected))
   return (
-    <SettingsPanel {...layout} actions={<>
-        {dirty && <span className="badge-warning">未保存</span>}
-        <button type="button" className="btn-secondary gap-2" onClick={() => setHistoryOpen(true)}><History className="h-4 w-4" />执行记录</button>
-        <button type="submit" form="automation-settings" className="btn-primary gap-2 disabled:opacity-50" disabled={busy || !form}><Save className="h-4 w-4" />{busy ? '处理中…' : '保存设置'}</button>
-      </>}>
+    <SettingsPanel {...layout} status={<AutosaveStatus autosave={autosave} />} actions={
+      <button type="button" className="btn-secondary gap-2" onClick={() => setHistoryOpen(true)}><History className="h-4 w-4" />执行记录</button>
+    }>
       <div className="space-y-4">
-        <Notice onClose={failure ? () => setFailure('') : undefined}>{failure || error?.message}</Notice>
-        <Notice type="success" onClose={() => setMessage('')}>{message}</Notice>
+        <Notice onClose={failure ? () => setFailure('') : undefined}>{failure || (!form && error?.message)}</Notice>
+        <AutosaveFeedback autosave={autosave} fields={data?.unified ? ['schedule', 'proxy'] : ['checkCron', 'updateCron', 'proxy']} />
+        <Notice type="warning">{autosave.refreshFailure}</Notice>
         {isLoading && <div className="card p-6 animate-pulse h-48" />}
-        {form && <form id="automation-settings" onSubmit={save} className="space-y-4">
+        {form && <form id="automation-settings" onSubmit={event => { event.preventDefault(); void autosave.flush() }} className="space-y-4">
           <section className="card rounded-2xl overflow-hidden">
             <div className="px-4 sm:px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center gap-1 sm:gap-3">
               <h3 className="font-semibold flex items-center gap-2 whitespace-nowrap"><Clock className="h-5 w-5 text-primary-600 dark:text-primary-400" />定时计划</h3>
@@ -136,14 +102,15 @@ export function Automation({ layout, onDirty }) {
                     <input type="checkbox" disabled={busy} className={checkbox} checked={key === 'checkCron' ? form.startupCheck : form.autoUpdate} onChange={e => change(key === 'checkCron' ? 'startupCheck' : 'autoUpdate', e.target.checked)} />{key === 'checkCron' ? '启动时检测' : '开启自动更新'}
                   </label>}
                 </div>
-                <select id={key} disabled={busy} aria-label={`${label}常用频率`} className="input min-h-[44px] sm:min-h-0 text-sm" value={(custom[key] ?? isCustom(form[key])) ? 'custom' : form[key]} onChange={e => {
+                <select id={key} disabled={busy} aria-label={`${label}常用频率`} aria-invalid={invalid(data.unified ? 'schedule' : key) || undefined} aria-describedby={invalid(data.unified ? 'schedule' : key) ? `${key}-error` : undefined} className="input min-h-[44px] sm:min-h-0 text-sm" value={(custom[key] ?? isCustom(form[key])) ? 'custom' : form[key]} onChange={e => {
                   setCustom(current => ({ ...current, [key]: e.target.value === 'custom' }))
                   if (e.target.value !== 'custom') change(key, e.target.value)
                 }}>
                   {frequencies.map(([value, text]) => <option key={value} value={value}>{text}</option>)}
                   <option value="custom">自定义 Cron</option>
                 </select>
-                {(custom[key] ?? isCustom(form[key])) && <input required disabled={busy} className="input min-h-[44px] sm:min-h-0 text-sm font-mono" aria-label={`${label} Cron`} placeholder="分 时 日 月 周" value={form[key]} onChange={e => change(key, e.target.value)} />}
+                {(custom[key] ?? isCustom(form[key])) && <input required disabled={busy} className={`input min-h-[44px] sm:min-h-0 text-sm font-mono ${invalid(data.unified ? 'schedule' : key) ? 'border-red-400 dark:border-red-500 focus:ring-red-500' : ''}`} aria-label={`${label} Cron`} aria-invalid={invalid(data.unified ? 'schedule' : key) || undefined} aria-describedby={invalid(data.unified ? 'schedule' : key) ? `${key}-error` : undefined} placeholder="分 时 日 月 周" value={form[key]} {...autosave.inputProps(data.unified ? 'schedule' : key)} onChange={e => change(key, e.target.value, 500)} />}
+                <AutosaveFeedback autosave={autosave} target={data.unified ? 'schedule' : key} id={`${key}-error`} />
                 {!data.unified && <p className="text-xs text-gray-500 dark:text-gray-400">下次{dirty ? '（已保存计划）' : ''} · {date(key === 'checkCron' ? data.nextRuns.check : data.nextRuns.update)}<span className="ml-2">{data.nextRuns.timezone}</span></p>}
               </div>)}
               {data.unified && <div className="flex flex-wrap items-center gap-x-2 gap-y-1 md:self-end md:min-h-[38px] text-xs min-w-0">
@@ -171,11 +138,12 @@ export function Automation({ layout, onDirty }) {
             <div className="px-4 sm:px-6 py-4 grid sm:grid-cols-[auto_minmax(0,1fr)] items-start gap-x-4 gap-y-2">
               <label htmlFor="registry-proxy" className="block sm:flex sm:items-center sm:min-h-[38px] text-sm font-medium">代理地址</label>
               <div className="min-w-0 space-y-2">
-                <input id="registry-proxy" disabled={busy} autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} type="text" inputMode="url" aria-describedby="registry-proxy-help" className="input min-h-[44px] sm:min-h-0 text-sm font-mono" placeholder="http://proxy.example:7890" value={form.httpsProxy || form.httpProxy || ''} onChange={event => {
+                <input id="registry-proxy" disabled={busy} autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} type="text" inputMode="url" aria-invalid={invalid('proxy') || undefined} aria-describedby={`registry-proxy-help${invalid('proxy') ? ' registry-proxy-error' : ''}`} className={`input min-h-[44px] sm:min-h-0 text-sm font-mono ${invalid('proxy') ? 'border-red-400 dark:border-red-500 focus:ring-red-500' : ''}`} placeholder="http://proxy.example:7890" value={form.httpsProxy || form.httpProxy || ''} {...autosave.inputProps('proxy')} onChange={event => {
                   const value = event.target.value
-                  setDraft(current => ({ ...(current || form), httpProxy: value, httpsProxy: value }))
+                  autosave.change('proxy', { httpProxy: value, httpsProxy: value }, 500)
                 }} />
-                <p id="registry-proxy-help" className="text-xs text-gray-500 dark:text-gray-400">留空直连，保存后生效。</p>
+                <p id="registry-proxy-help" className="text-xs text-gray-500 dark:text-gray-400">修改后自动保存，留空直连。</p>
+                <AutosaveFeedback autosave={autosave} target="proxy" id="registry-proxy-error" />
                 {form.httpProxy !== form.httpsProxy && <p className="text-xs text-amber-600 dark:text-amber-400">原代理配置不同，当前显示 {form.httpsProxy ? 'HTTPS' : 'HTTP'} 代理；修改后将统一。</p>}
               </div>
             </div>

@@ -41,7 +41,7 @@ export function DeviceSelector({ deviceId, onChange, onManageDevices, compact = 
       >
         {!mobile && <Monitor aria-hidden="true" className={cn('h-5 w-5 flex-shrink-0', error || missing ? 'text-amber-600 dark:text-amber-400' : 'text-primary-600 dark:text-primary-400')} />}
         {!compact && <div className="min-w-0 flex-1">
-          {mobile && <span className="block text-[11px] leading-4 text-gray-500 dark:text-gray-400">Docker Copilot</span>}
+          {mobile && <span className="block truncate text-sm sm:text-lg font-bold text-gray-900 dark:text-white">Docker Copilot</span>}
           <span className={cn('flex items-center gap-1 text-sm font-semibold', mobile ? 'text-primary-700 dark:text-primary-300' : 'text-gray-900 dark:text-white')}>
             <span className="truncate">{deviceName}</span>
             {mobile && <ChevronDown aria-hidden="true" className="h-4 w-4 flex-shrink-0" />}

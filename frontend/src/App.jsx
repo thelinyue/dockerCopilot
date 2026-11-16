@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { Auth } from './components/Auth.jsx'
 import { Sidebar, MobileBottomNav } from './components/Header.jsx'
 import { Containers } from './components/Containers.jsx'
@@ -27,6 +27,8 @@ function AppContent() {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [deviceId, setDeviceId] = useState(() => localStorage.getItem('docker_copilot_device') || 'local')
   const [dirty, setDirty] = useState(false)
+  const settingsBeforeLeave = useRef(null)
+  const leaving = useRef(false)
   const [activeTab, setActiveTab] = useState('#compose')
   const [settingsSection, setSettingsSection] = useState('automation')
   const dirtyName = activeTab === '#settings' ? (settingsSection === 'notifications' ? '消息推送设置' : '自动更新设置') : '项目文件'
@@ -132,8 +134,18 @@ function AppContent() {
     window.dispatchEvent(new CustomEvent('authChange', { detail: { authenticated: true } }))
   }
 
+  // 设置先排空自动保存，再沿用放弃修改确认；项目文件仍使用原来的显式保存保护。
+  const prepareLeave = async (title, action) => {
+    if (leaving.current) return false
+    leaving.current = true
+    try {
+      const saved = settingsBeforeLeave.current ? await settingsBeforeLeave.current() : !dirty
+      return saved || await confirm({ title, message: `${dirtyName}有尚未保存的修改，${action}后将丢失。`, confirmText: '放弃修改' })
+    } finally { leaving.current = false }
+  }
+
   const handleLogout = async () => {
-    if (dirty && !await confirm({ title: '退出登录', message: `${dirtyName}有未保存的修改，退出后将丢失。`, confirmText: '放弃修改' })) return
+    if (!await prepareLeave('退出登录', '退出')) return
     setDirty(false)
     setContainerScope(null)
     setComposeTarget(null)
@@ -148,7 +160,7 @@ function AppContent() {
       if (tab === '#containers') setContainerScope(null)
       return true
     }
-    if (dirty && !await confirm({ title: '离开当前页面', message: `${dirtyName}有未保存的修改，离开后将丢失。`, confirmText: '放弃修改' })) return false
+    if (!await prepareLeave('离开当前页面', '离开')) return false
     setDirty(false)
     setContainerScope(null)
     setComposeTarget(null)
@@ -158,7 +170,7 @@ function AppContent() {
 
   const handleSettingsSectionChange = async (section) => {
     if (section === settingsSection) return true
-    if (dirty && !await confirm({ title: '切换设置分类', message: `${dirtyName}有未保存的修改，切换后将丢失。`, confirmText: '放弃修改' })) return false
+    if (!await prepareLeave('切换设置分类', '切换')) return false
     setDirty(false)
     setSettingsSection(section)
     return true
@@ -174,7 +186,7 @@ function AppContent() {
 
   const handleDeviceChange = async (id) => {
     if (id === deviceId) return true
-    if (dirty && !await confirm({ title: '切换设备', message: `${dirtyName}有未保存的修改，切换后将丢失。`, confirmText: '放弃修改' })) return false
+    if (!await prepareLeave('切换设备', '切换')) return false
     setDirty(false)
     setContainerScope(null)
     setComposeTarget(null)
@@ -207,7 +219,7 @@ function AppContent() {
       case '#compose':
         return <Compose onDirty={setDirty} initialTarget={composeTarget} onOpenContainers={openContainers} />
       case '#settings':
-        return <Settings section={settingsSection} onSectionChange={handleSettingsSectionChange} onDirty={setDirty} />
+        return <Settings section={settingsSection} onSectionChange={handleSettingsSectionChange} onDirty={setDirty} beforeLeave={settingsBeforeLeave} />
       default:
         return <Compose onDirty={setDirty} initialTarget={composeTarget} onOpenContainers={openContainers} />
     }
