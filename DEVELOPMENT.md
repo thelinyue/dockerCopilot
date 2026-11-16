@@ -112,6 +112,15 @@ DOCKERCOPILOT_PRUNE_RUNNER=/tmp/copilot-prune-runner \
   go test ./internal/management -run '^TestIsolatedImagePrune$' -v -timeout 3m
 ```
 
+消息推送测试默认使用本地模拟 HTTP 服务，覆盖事件开关、汇总、恢复状态、密钥隐藏、重定向拒绝及超时。可对独立 Bark 服务端显式运行实际联调：
+
+```sh
+DOCKERCOPILOT_BARK_TEST_URL=http://127.0.0.1:18081/bark-test \
+  go test ./internal/management -run '^TestBarkWSLServerIntegration$' -v
+```
+
+该用例检查真实 `/ping`，通过测试接口和任务结束入口调用 `/push`，使用未注册的测试密钥验证 HTTP 400 及任务结果隔离，不注册手机、不向 APNs 投递。服务端接受推送的成功路径另由模拟服务覆盖，真实手机到达需使用 Bark App 注册的设备单独验收。并发检查应将 `./internal/notify` 与既有包一起加入 `go test -race`。
+
 跨架构编译或打包检查不等同于 arm64 真机运行；模拟 HTTP、隔离容器运行与实际设备验收应分别记录。正式 Release 下载和程序替换验收需要已有合适的本仓库正式资源。
 
 ## 已知限制

@@ -13,6 +13,7 @@ import (
 
 	"github.com/onlyLTY/dockerCopilot/internal/config"
 	"github.com/onlyLTY/dockerCopilot/internal/node"
+	"github.com/onlyLTY/dockerCopilot/internal/notify"
 	"github.com/onlyLTY/dockerCopilot/internal/svc"
 	"github.com/onlyLTY/dockerCopilot/internal/types"
 	"github.com/zeromicro/go-zero/rest"
@@ -126,34 +127,49 @@ func (m *Manager) Routes(server *rest.Server) {
 		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 		defer cancel()
 		b, err := exec.CommandContext(ctx, "docker", "compose", "version", "--short").Output()
-		reply(w, map[string]any{"version": config.Version, "buildDate": config.BuildDate, "composeVersion": strings.TrimSpace(string(b)), "composeRoot": ComposeRoot(), "capabilities": map[string]bool{"compose": err == nil, "composeEditing": true, "schedules": true, "devices": true}}, nil)
+		reply(w, map[string]any{"version": config.Version, "buildDate": config.BuildDate, "composeVersion": strings.TrimSpace(string(b)), "composeRoot": ComposeRoot(), "capabilities": map[string]bool{"compose": err == nil, "composeEditing": true, "schedules": true, "devices": true, "notifications": true}}, nil)
 	})
 	add("GET", "/settings", func(w http.ResponseWriter, r *http.Request) {
 		s := m.Context.Settings.Get()
 		s.HTTPProxy = node.RedactProxy(s.HTTPProxy)
 		s.HTTPSProxy = node.RedactProxy(s.HTTPSProxy)
-		reply(w, map[string]any{"settings": s, "nextRuns": m.NextRuns()}, nil)
+		public := struct {
+			node.Settings
+			Notifications any `json:"notifications"`
+		}{s, s.Notifications.Public()}
+		reply(w, map[string]any{"settings": public, "nextRuns": m.NextRuns()}, nil)
 	})
 	add("PUT", "/settings", func(w http.ResponseWriter, r *http.Request) {
-		s := m.Context.Settings.Get()
-		previous := s
-		err := decode(w, r, &s)
+		var patch json.RawMessage
+		err := decode(w, r, &patch)
 		if err == nil {
-			if s.HTTPProxy == node.RedactProxy(previous.HTTPProxy) {
-				s.HTTPProxy = previous.HTTPProxy
-			}
-			if s.HTTPSProxy == node.RedactProxy(previous.HTTPSProxy) {
-				s.HTTPSProxy = previous.HTTPSProxy
-			}
-			err = m.Context.Settings.Save(s)
+			err = m.Context.Settings.Patch(patch)
 		}
 		if err == nil {
 			m.ReloadSchedules()
-			m.Context.HubImageInfo.Clear()
 		}
 		reply(w, nil, err)
 	})
 	add("GET", "/tasks", func(w http.ResponseWriter, r *http.Request) { reply(w, m.Context.Tasks(), nil) })
+	add("POST", "/notifications/test", func(w http.ResponseWriter, r *http.Request) {
+		var bark node.BarkSettings
+		err := decode(w, r, &bark)
+		if err == nil {
+			stored := m.Context.Settings.Get().Notifications.Bark
+			bark.ServerURL = strings.TrimRight(strings.TrimSpace(bark.ServerURL), "/")
+			bark.DeviceKey = strings.TrimSpace(bark.DeviceKey)
+			if bark.DeviceKey == "" {
+				bark.DeviceKey = stored.DeviceKey
+			}
+			err = bark.Validate(true)
+		}
+		if err == nil {
+			ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+			defer cancel()
+			err = notify.SendBark(ctx, bark, notify.Message{Title: "DockerCopilot · 测试推送", Body: notify.Clip(m.Context.NotificationDevice(ctx), 120) + " · " + time.Now().Format("01-02 15:04") + "\n消息推送测试"})
+		}
+		reply(w, map[string]string{"message": "Bark 已接受推送"}, err)
+	})
 	for _, item := range []struct {
 		path, name string
 		fn         func(context.Context, string) error

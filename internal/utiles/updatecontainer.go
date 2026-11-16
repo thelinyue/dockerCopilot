@@ -11,15 +11,30 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/pkg/jsonmessage"
+	"github.com/onlyLTY/dockerCopilot/internal/notify"
 	"github.com/onlyLTY/dockerCopilot/internal/svc"
 )
 
 func UpdateContainer(s *svc.ServiceContext, id, name, imageRef string, deleteOld bool, taskID string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
+	notice := notify.Result{ID: id, Key: "container:" + strings.TrimPrefix(name, "/"), Object: strings.TrimPrefix(name, "/"), Image: imageRef, Outcome: "failed"}
+	succeeded := false
+	defer func() {
+		notice.Kind = notify.UpdateFailed
+		if succeeded {
+			notice.Kind, notice.Outcome = notify.UpdateSucceeded, "succeeded"
+		}
+		s.RecordNotice(taskID, notice)
+	}()
 	old, err := s.DockerClient.ContainerInspect(ctx, id)
 	if err != nil {
 		return err
+	}
+	notice = svc.ContainerNotice(old)
+	notice.Outcome = "failed"
+	if imageRef != "" {
+		notice.Image = imageRef
 	}
 	if err := CanRecreate(old); err != nil {
 		return err
@@ -76,11 +91,13 @@ func UpdateContainer(s *svc.ServiceContext, id, name, imageRef string, deleteOld
 		}
 		p, _ := s.GetProgress(taskID)
 		if recoverErr != nil {
+			notice.Outcome = "rollback_failed"
 			p.Status = "rollback_failed"
 			s.UpdateProgress(taskID, p)
 			return fmt.Errorf("更新失败，旧容器恢复失败，请人工处理: %v；恢复: %v", cause, recoverErr)
 		}
 		p.Status = "rolled_back"
+		notice.Outcome = "rolled_back"
 		s.UpdateProgress(taskID, p)
 		return fmt.Errorf("更新失败，已恢复旧容器: %v", cause)
 	}
@@ -113,6 +130,7 @@ func UpdateContainer(s *svc.ServiceContext, id, name, imageRef string, deleteOld
 	s.HubImageInfo.Delete(old.ID, newID)
 	s.ScheduleImageCleanup(taskID, old.Image)
 	progress(100, "更新成功")
+	succeeded = true
 	return nil
 }
 

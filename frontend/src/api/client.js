@@ -175,6 +175,7 @@ export function createDeviceAPI(deviceId = 'local') {
     info: () => result(scopedClient.get('/api/node/info')),
     settings: () => result(scopedClient.get('/api/settings')),
     saveSettings: (settings) => result(scopedClient.put('/api/settings', settings)),
+    testNotification: (bark) => result(scopedClient.post('/api/notifications/test', bark)),
     tasks: () => result(scopedClient.get('/api/tasks')),
     check: () => result(scopedClient.post('/api/checks')),
     autoUpdate: () => result(scopedClient.post('/api/auto-update')),

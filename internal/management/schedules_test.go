@@ -113,6 +113,100 @@ func TestAutomationHTTPRequestsShareTaskScopeAndPreserveSettingsOnFailure(t *tes
 	}
 }
 
+func TestSettingsSaveRetainsDetectionAndSchedule(t *testing.T) {
+	settings, err := node.OpenSettings(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &svc.ServiceContext{Settings: settings, HubImageInfo: module.NewImageCheck()}
+	s.Config.Auth.AccessSecret = "notification-settings-test"
+	m := New(s)
+	m.ReloadSchedules()
+	m.cron.Start()
+	defer m.Stop()
+	server := rest.MustNewServer(config.Config{}.RestConf)
+	defer server.Stop()
+	m.Routes(server)
+	var save http.HandlerFunc
+	for _, route := range server.Routes() {
+		if route.Method == "PUT" && route.Path == "/api/settings" {
+			save = route.Handler
+		}
+	}
+	s.HubImageInfo.Set("app", module.ImageCheckList{NeedUpdate: true, CheckedAt: time.Now()})
+	entry, next := m.scheduleJob, m.NextRuns()["schedule"]
+	for _, body := range []string{`{}`, `{"startupCheck":false}`, `{"httpsProxy":"http://proxy.example:7890"}`, `{"excludedContainers":["app"]}`, `{"autoUpdate":true}`} {
+		r := httptest.NewRequest("PUT", "/api/settings", strings.NewReader(body))
+		r.Header.Set("Authorization", "Bearer "+signedTestToken(t, s.Config.Auth.AccessSecret, time.Now().Add(time.Hour)))
+		w := httptest.NewRecorder()
+		save(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatal(body, w.Code, w.Body.String())
+		}
+		if result, ok := s.HubImageInfo.Get("app"); !ok || !result.NeedUpdate {
+			t.Fatal("保存无关设置清除了上次检测结果", body)
+		}
+		if m.scheduleJob != entry || m.NextRuns()["schedule"] != next {
+			t.Fatal("执行频率未变化却重建了计划", body)
+		}
+	}
+}
+
+func TestScheduleReadsLatestModeWithoutReplacingJob(t *testing.T) {
+	t.Setenv("COMPOSE_ROOT", t.TempDir())
+	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != "GET" || !strings.HasSuffix(r.URL.Path, "/containers/json") {
+			t.Error("空设备计划执行了意外操作", r.Method, r.URL.Path)
+		}
+		w.Write([]byte("[]"))
+	}))
+	defer daemon.Close()
+	cli, err := client.NewClientWithOpts(client.WithHost(daemon.URL), client.WithVersion("1.47"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cli.Close()
+	settings, err := node.OpenSettings(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &svc.ServiceContext{Settings: settings, DockerClient: cli, HubImageInfo: module.NewImageCheck()}
+	m := New(s)
+	m.ReloadSchedules()
+	m.cron.Start()
+	defer m.Stop()
+	entry, next := m.scheduleJob, m.NextRuns()["schedule"]
+	for i, mode := range []bool{false, true} {
+		patch, _ := json.Marshal(map[string]bool{"autoUpdate": mode})
+		if err := settings.Patch(patch); err != nil {
+			t.Fatal(err)
+		}
+		m.ReloadSchedules()
+		if m.scheduleJob != entry || m.NextRuns()["schedule"] != next {
+			t.Fatal("切换模式重置了计划")
+		}
+		m.cron.Entry(entry).Job.Run()
+		for deadline := time.Now().Add(2 * time.Second); ; {
+			tasks := s.Tasks()
+			if len(tasks) == i+1 && tasks[0].IsDone {
+				want := "check"
+				if mode {
+					want = "auto-update"
+				}
+				if tasks[0].Action != want || tasks[0].Status != "succeeded" {
+					t.Fatal("调度使用了旧模式", tasks)
+				}
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("计划任务未完成", tasks)
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+}
+
 func TestStartupOnlyChecksAndScheduledJobsShareManualTaskScope(t *testing.T) {
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

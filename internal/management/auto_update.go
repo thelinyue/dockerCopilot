@@ -9,6 +9,7 @@ import (
 	docker "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/onlyLTY/dockerCopilot/internal/node"
+	"github.com/onlyLTY/dockerCopilot/internal/notify"
 	"github.com/onlyLTY/dockerCopilot/internal/svc"
 	"github.com/onlyLTY/dockerCopilot/internal/utiles"
 )
@@ -40,6 +41,7 @@ func (m *Manager) AutoUpdate(ctx context.Context, id string) error {
 	projects, err := m.Projects(ctx)
 	if err != nil {
 		results = append(results, "项目扫描: "+err.Error())
+		m.Context.RecordNotice(id, notify.Result{Key: "project-scan", Object: "项目扫描", Kind: notify.CheckFailed})
 		failures++
 	}
 	for _, project := range projects {
@@ -73,7 +75,15 @@ func (m *Manager) finishAutoObject(id string, release func()) {
 	m.Context.CleanupTaskImages(id)
 }
 
-func (m *Manager) autoUpdateContainer(ctx context.Context, id, containerID string, run *checkRun) (string, error) {
+func (m *Manager) autoUpdateContainer(ctx context.Context, id, containerID string, run *checkRun) (line string, taskErr error) {
+	notice := notify.Result{ID: containerID, Key: "container:" + containerID, Object: containerID, Kind: notify.CheckFailed}
+	updating := false
+	defer func() {
+		// 进入重建流程前的读取失败也要保留对象；重建及恢复结果由更新流程记录。
+		if taskErr != nil && !updating {
+			m.Context.RecordNotice(id, notice)
+		}
+	}()
 	v, release, err := m.Context.AcquireContainer(ctx, containerID, "")
 	if err != nil {
 		if svc.IsBusy(err) {
@@ -81,6 +91,8 @@ func (m *Manager) autoUpdateContainer(ctx context.Context, id, containerID strin
 		}
 		return containerID + ": " + err.Error(), err
 	}
+	notice = svc.ContainerNotice(v)
+	notice.Kind = notify.CheckFailed
 	m.Context.TaskResource(id, svc.ContainerScope(v).Resource, "update")
 	defer m.finishAutoObject(id, release)
 	s := m.Context.Settings.Get()
@@ -100,10 +112,12 @@ func (m *Manager) autoUpdateContainer(ctx context.Context, id, containerID strin
 		return v.Name + ": 已跳过，" + err.Error(), nil
 	}
 	if !run.unchanged(v) {
+		m.Context.ForgetAvailable(id, svc.ContainerNotice(v).Key)
 		return v.Name + ": 已跳过（容器在本次检测后已变化或未能确认，请重新执行）", nil
 	}
 	checked, currentCheck := m.checkContainer(ctx, v, v.Config.Image, run)
 	if !currentCheck {
+		m.Context.ForgetAvailable(id, svc.ContainerNotice(v).Key)
 		return v.Name + ": 已跳过（检测期间容器已变化）", nil
 	}
 	if checked.Error != "" {
@@ -112,6 +126,7 @@ func (m *Manager) autoUpdateContainer(ctx context.Context, id, containerID strin
 	if !checked.NeedUpdate {
 		return v.Name + ": 已是最新镜像", nil
 	}
+	updating = true
 	if err := utiles.UpdateContainer(m.Context, v.ID, v.Name, v.Config.Image, os.Getenv("DelOldContainer") != "false", id); err != nil {
 		return v.Name + ": " + err.Error(), err
 	}
@@ -128,6 +143,7 @@ func (m *Manager) autoUpdateProject(ctx context.Context, id string, project Proj
 	defer m.finishAutoObject(id, release)
 	p, err := m.Project(ctx, project.ID)
 	if err != nil {
+		m.Context.RecordNotice(id, notify.Result{Key: "project:" + project.Name, Object: project.Name, Kind: notify.CheckFailed})
 		return []string{project.Name + ": 无法校验，" + err.Error()}, err
 	}
 	s := m.Context.Settings.Get()
@@ -144,6 +160,7 @@ func (m *Manager) autoUpdateProject(ctx context.Context, id string, project Proj
 	}
 	model, err := m.model(ctx, p)
 	if err != nil {
+		m.Context.RecordNotice(id, notify.Result{Key: "project:" + p.Name, Object: p.Name, Kind: notify.CheckFailed})
 		return append(results, p.Name+": 无法校验，"+err.Error()), err
 	}
 	selected, failures := []string{}, 0
@@ -159,6 +176,7 @@ func (m *Manager) autoUpdateProject(ctx context.Context, id string, project Proj
 		for _, containerID := range service.Containers {
 			v, err := m.Context.DockerClient.ContainerInspect(ctx, containerID)
 			if err != nil {
+				m.Context.RecordNotice(id, notify.Result{ID: containerID, Key: "service:" + p.Name + "/" + service.Name, Object: p.Name + "/" + service.Name, Image: target.Image, Kind: notify.CheckFailed})
 				allowed = false
 				failures++
 				break
@@ -184,6 +202,9 @@ func (m *Manager) autoUpdateProject(ctx context.Context, id string, project Proj
 				break
 			}
 			if checked.Error != "" {
+				notice := svc.ContainerNotice(v)
+				notice.Image, notice.Kind = target.Image, notify.CheckFailed
+				m.Context.RecordNotice(id, notice)
 				allowed = false
 				failures++
 				results = append(results, p.Name+"/"+service.Name+": "+checked.Error)

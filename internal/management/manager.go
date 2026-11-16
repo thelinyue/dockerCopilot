@@ -14,6 +14,7 @@ import (
 	"github.com/docker/docker/errdefs"
 	"github.com/onlyLTY/dockerCopilot/internal/module"
 	"github.com/onlyLTY/dockerCopilot/internal/node"
+	"github.com/onlyLTY/dockerCopilot/internal/notify"
 	"github.com/onlyLTY/dockerCopilot/internal/svc"
 	"github.com/robfig/cron/v3"
 	"github.com/zeromicro/go-zero/core/logx"
@@ -21,11 +22,12 @@ import (
 )
 
 type Manager struct {
-	Context     *svc.ServiceContext
-	mu          sync.Mutex
-	cron        *cron.Cron
-	scheduleJob cron.EntryID
-	parser      *token.TokenParser
+	Context      *svc.ServiceContext
+	mu           sync.Mutex
+	cron         *cron.Cron
+	scheduleJob  cron.EntryID
+	scheduleCron string
+	parser       *token.TokenParser
 }
 
 func New(s *svc.ServiceContext) *Manager {
@@ -53,14 +55,19 @@ func (m *Manager) ReloadSchedules() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	s := m.Context.Settings.Get()
+	if m.scheduleJob != 0 && m.scheduleCron == s.ScheduleCron() {
+		return
+	}
 	m.cron.Remove(m.scheduleJob)
 	m.scheduleJob, _ = m.cron.AddFunc(s.ScheduleCron(), func() {
-		if s.AutoUpdate {
+		// 模式在触发时读取，切换自动更新不改变下一次执行时间。
+		if m.Context.Settings.Get().AutoUpdate {
 			m.launch("定时检测并更新", "auto-update", m.AutoUpdate)
 		} else {
 			m.launch("定时检测", "check", m.Check)
 		}
 	})
+	m.scheduleCron = s.ScheduleCron()
 }
 func (m *Manager) NextRuns() map[string]any {
 	m.mu.Lock()
@@ -179,11 +186,15 @@ func (m *Manager) checkAll(ctx context.Context, id string, run *checkRun, progre
 		if err != nil {
 			if !errdefs.IsNotFound(err) {
 				run.failed++
+				notice := svc.ContainerNotice(docker.ContainerJSON{ContainerJSONBase: &docker.ContainerJSONBase{ID: c.ID, Name: firstContainerName(c.Names, c.ID)}, Config: &container.Config{Image: c.Image, Labels: c.Labels}})
+				notice.Kind = notify.CheckFailed
+				m.Context.RecordNotice(id, notice)
 			}
 			continue
 		}
 		if v.Config == nil {
 			run.failed++
+			m.Context.RecordNotice(id, notify.Result{ID: c.ID, Key: "container:" + c.ID, Object: strings.TrimPrefix(v.Name, "/"), Kind: notify.CheckFailed})
 			continue
 		}
 		result, current := m.checkContainer(ctx, v, v.Config.Image, run)
@@ -191,11 +202,17 @@ func (m *Manager) checkAll(ctx context.Context, id string, run *checkRun, progre
 			continue
 		}
 		run.containers[v.ID] = v
+		notice := svc.ContainerNotice(v)
 		if result.Error != "" {
 			run.failed++
+			notice.Kind = notify.CheckFailed
 		}
 		if result.NeedUpdate {
 			run.available++
+			notice.Kind = notify.Available
+		}
+		if notice.Kind != "" {
+			m.Context.RecordNotice(id, notice)
 		}
 		m.message(id, (i+1)*progressEnd/len(list), fmt.Sprintf("已检测 %d/%d 个容器，可更新 %d 个，无法确认 %d 个", i+1, len(list), run.available, run.failed))
 	}
@@ -203,6 +220,13 @@ func (m *Manager) checkAll(ctx context.Context, id string, run *checkRun, progre
 	p.DetailMsg = run.summary()
 	m.Context.UpdateProgress(id, p)
 	return nil
+}
+
+func firstContainerName(names []string, fallback string) string {
+	if len(names) > 0 {
+		return names[0]
+	}
+	return fallback
 }
 
 func excluded(s node.Settings, v docker.ContainerJSON) bool {

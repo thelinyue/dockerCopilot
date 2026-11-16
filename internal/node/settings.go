@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 
@@ -13,14 +14,15 @@ import (
 )
 
 type Settings struct {
-	CheckCron          string   `json:"checkCron"`
-	StartupCheck       bool     `json:"startupCheck"`
-	AutoUpdate         bool     `json:"autoUpdate"`
-	UpdateCron         string   `json:"updateCron"`
-	ExcludedContainers []string `json:"excludedContainers"`
-	ExcludedServices   []string `json:"excludedServices"`
-	HTTPProxy          string   `json:"httpProxy"`
-	HTTPSProxy         string   `json:"httpsProxy"`
+	CheckCron          string               `json:"checkCron"`
+	StartupCheck       bool                 `json:"startupCheck"`
+	AutoUpdate         bool                 `json:"autoUpdate"`
+	UpdateCron         string               `json:"updateCron"`
+	ExcludedContainers []string             `json:"excludedContainers"`
+	ExcludedServices   []string             `json:"excludedServices"`
+	HTTPProxy          string               `json:"httpProxy"`
+	HTTPSProxy         string               `json:"httpsProxy"`
+	Notifications      NotificationSettings `json:"notifications"`
 }
 
 // 旧配置保留两个 Cron 字段，合并时优先保留原自动更新时间，避免扩大更新频率。
@@ -51,6 +53,7 @@ func OpenSettings(dir string) (*Store, error) {
 		CheckCron: "30 * * * *", StartupCheck: true, UpdateCron: "0 3 * * *",
 		HTTPProxy: os.Getenv("HTTP_PROXY"), HTTPSProxy: os.Getenv("HTTPS_PROXY"),
 		ExcludedContainers: []string{}, ExcludedServices: []string{},
+		Notifications: DefaultNotifications(),
 	}}
 	b, err := os.ReadFile(s.path)
 	missing := os.IsNotExist(err)
@@ -65,6 +68,9 @@ func OpenSettings(dir string) (*Store, error) {
 	if missing {
 		// 新安装只有一个频率；旧文件缺少字段时仍沿用旧版默认值。
 		s.settings.UpdateCron = s.settings.CheckCron
+	}
+	if s.settings.Notifications == (NotificationSettings{}) {
+		s.settings.Notifications = DefaultNotifications()
 	}
 	if err = Validate(s.settings); err != nil {
 		return nil, err
@@ -95,7 +101,7 @@ func Validate(s Settings) error {
 			return fmt.Errorf("代理地址无效，请使用 http://主机:端口、https://主机:端口或 socks5://主机:端口")
 		}
 	}
-	return nil
+	return s.Notifications.Validate()
 }
 
 func (s *Store) Get() Settings {
@@ -108,20 +114,67 @@ func (s *Store) Get() Settings {
 }
 
 func (s *Store) Save(v Settings) error {
-	if err := Validate(v); err != nil {
-		return err
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.saveLocked(v)
+}
+
+// 在同一临界区读取、合并和写入，分类同时保存时不会覆盖其他分类的新值。
+func (s *Store) Patch(data json.RawMessage) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil || fields == nil {
+		return fmt.Errorf("设置格式无效，请提交设置对象")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	cron := v.ScheduleCron()
-	// 仅切换自动更新开关时保持原频率；保存后两个兼容字段表示同一个计划。
-	if v.CheckCron == s.settings.CheckCron && v.UpdateCron == s.settings.UpdateCron {
-		cron = s.settings.ScheduleCron()
+	v := s.settings
+	v.ExcludedContainers = append([]string{}, v.ExcludedContainers...)
+	v.ExcludedServices = append([]string{}, v.ExcludedServices...)
+	if err := json.Unmarshal(data, &v); err != nil {
+		return fmt.Errorf("设置字段格式无效，请检查输入")
 	}
-	v.CheckCron, v.UpdateCron = cron, cron
-	if err := WriteJSON(s.path, v); err != nil {
+	for _, pair := range []struct {
+		value    *string
+		previous string
+	}{{&v.HTTPProxy, s.settings.HTTPProxy}, {&v.HTTPSProxy, s.settings.HTTPSProxy}} {
+		if *pair.value == RedactProxy(pair.previous) {
+			*pair.value = pair.previous
+		}
+	}
+	// 密钥只写入，留空保留；读取接口不会返回可被误保存的密钥掩码。
+	if strings.TrimSpace(v.Notifications.Bark.DeviceKey) == "" {
+		v.Notifications.Bark.DeviceKey = s.settings.Notifications.Bark.DeviceKey
+	}
+	return s.saveLocked(v)
+}
+
+func (s *Store) saveLocked(v Settings) error {
+	v.Notifications.Bark.ServerURL = strings.TrimRight(strings.TrimSpace(v.Notifications.Bark.ServerURL), "/")
+	v.Notifications.Bark.DeviceKey = strings.TrimSpace(v.Notifications.Bark.DeviceKey)
+	if err := Validate(v); err != nil {
 		return err
 	}
+	if v.CheckCron != s.settings.CheckCron || v.UpdateCron != s.settings.UpdateCron || v.AutoUpdate != s.settings.AutoUpdate {
+		cron := v.ScheduleCron()
+		if v.CheckCron != s.settings.CheckCron && v.UpdateCron == s.settings.UpdateCron {
+			cron = v.CheckCron
+		} else if v.UpdateCron != s.settings.UpdateCron && v.CheckCron == s.settings.CheckCron {
+			cron = v.UpdateCron
+		}
+		// 仅切换模式保留原频率；其他分类保存不归一旧双 Cron。
+		if v.CheckCron == s.settings.CheckCron && v.UpdateCron == s.settings.UpdateCron {
+			cron = s.settings.ScheduleCron()
+		}
+		v.CheckCron, v.UpdateCron = cron, cron
+	}
+	if reflect.DeepEqual(v, s.settings) {
+		return nil
+	}
+	if err := WriteJSON(s.path, v); err != nil {
+		return fmt.Errorf("保存设置失败，请检查数据目录权限和剩余空间")
+	}
+	v.ExcludedContainers = append([]string{}, v.ExcludedContainers...)
+	v.ExcludedServices = append([]string{}, v.ExcludedServices...)
 	s.settings = v
 	return nil
 }

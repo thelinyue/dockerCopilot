@@ -3,6 +3,7 @@ package container
 import (
 	"context"
 	"fmt"
+	"github.com/onlyLTY/dockerCopilot/internal/notify"
 	"github.com/onlyLTY/dockerCopilot/internal/svc"
 	"github.com/onlyLTY/dockerCopilot/internal/types"
 	"github.com/onlyLTY/dockerCopilot/internal/utiles"
@@ -34,6 +35,9 @@ func (l *UpdateLogic) Update(req *types.ContainerUpdateReq) (resp *types.Resp, e
 	}
 	taskID, err := l.svcCtx.RunTask("更新容器 "+strings.TrimPrefix(old.Name, "/"), svc.ContainerScope(old), "update", func(taskID string) error {
 		if err := l.svcCtx.VerifyContainer(context.Background(), old); err != nil {
+			notice := svc.ContainerNotice(old)
+			notice.Kind = notify.UpdateFailed
+			l.svcCtx.RecordNotice(taskID, notice)
 			return err
 		}
 		imageNameAndTag := req.ImageNameAndTag

@@ -6,6 +6,7 @@ import { Notice, SettingsPanel, useConfirmation } from './ManagementUI.jsx'
 import { ExclusionSelect } from './ExclusionSelect.jsx'
 import { TaskHistoryDialog, TaskProgressDialog } from './Tasks.jsx'
 import { getExclusionOptions, changeExclusion } from '../utils/exclusions.js'
+import { automationFields, changedFields } from '../utils/settings.js'
 
 const frequencies = [
   ['30 * * * *', '每小时第 30 分钟'],
@@ -27,7 +28,7 @@ const selectSettings = data => {
     unified,
     inheritedSchedule: unified && data.settings.checkCron !== data.settings.updateCron,
     settings: {
-      ...data.settings,
+      ...Object.fromEntries(automationFields.map(key => [key, data.settings[key]])),
       ...(unified ? { checkCron: cron, updateCron: cron } : {}),
       excludedContainers: [...new Set((data.settings.excludedContainers || []).map(value => value.trim()).filter(Boolean))],
       excludedServices: [...new Set((data.settings.excludedServices || []).map(value => value.trim()).filter(Boolean))],
@@ -73,10 +74,10 @@ export function Automation({ layout, onDirty }) {
   const save = event => {
     event.preventDefault()
     act(async () => {
-      const settings = { ...form }
+      const settings = changedFields(data.settings, form, automationFields)
       // 未改动的掩码不回传；编辑认证地址后必须重新填写密码，不能把掩码存成新密码。
       for (const key of ['httpProxy', 'httpsProxy']) {
-        if (settings[key] === data.settings[key]) delete settings[key]
+        if (!(key in settings)) continue
         else {
           let password = ''
           try { password = decodeURIComponent(new URL(settings[key]).password) } catch { /* 无效地址由服务端统一校验。 */ }
@@ -85,7 +86,7 @@ export function Automation({ layout, onDirty }) {
       }
       await managementAPI.saveSettings(settings)
       // 写入成功即可结束草稿；后续刷新负责取回代理掩码及下次执行时间。
-      queryClient.setQueryData([deviceId, 'settings'], current => ({ ...current, settings: form }))
+      queryClient.setQueryData([deviceId, 'settings'], current => ({ ...current, settings: { ...current.settings, ...settings } }))
       setDraft(null)
       await queryClient.invalidateQueries({ queryKey: [deviceId, 'settings'] })
       setMessage('设置已保存')
@@ -161,23 +162,20 @@ export function Automation({ layout, onDirty }) {
           </section>
           <section className="card rounded-2xl">
             <div className="px-4 sm:px-6 py-4 border-b border-gray-200 dark:border-gray-700"><h3 className="font-semibold flex items-center gap-2"><ShieldOff className="h-5 w-5 text-primary-600 dark:text-primary-400" />自动更新排除项</h3></div>
-            <div className="p-4 sm:p-6 space-y-3">
+            <div className="p-4 sm:p-6">
               <ExclusionSelect label="排除容器" options={exclusionOptions} onChange={setExclusion} disabled={busy} loading={containersLoading || projectsLoading} error={containerError || projectError} />
-              <p className="text-xs text-gray-500 dark:text-gray-400">项目容器按所属服务排除，同一服务的所有副本一起跳过；不影响直接手动更新。</p>
             </div>
           </section>
           <section className="card rounded-2xl overflow-hidden">
             <div className="px-4 sm:px-6 py-4 border-b border-gray-200 dark:border-gray-700"><h3 className="font-semibold flex items-center gap-2"><Network className="h-5 w-5 text-primary-600 dark:text-primary-400" />检测代理</h3></div>
-            <div className="p-4 sm:p-6 grid md:grid-cols-2 items-center gap-4">
-              <div className="space-y-2">
-                <label htmlFor="registry-proxy" className="block text-sm font-medium">代理地址</label>
-                <p id="registry-proxy-help" className="text-xs leading-relaxed text-gray-500 dark:text-gray-400">用于镜像更新检测，支持 HTTP、HTTPS、SOCKS5 / SOCKS5H。留空直连，点击「保存设置」后生效，无需重启。</p>
-              </div>
+            <div className="px-4 sm:px-6 py-4 grid sm:grid-cols-[auto_minmax(0,1fr)] items-start gap-x-4 gap-y-2">
+              <label htmlFor="registry-proxy" className="block sm:flex sm:items-center sm:min-h-[38px] text-sm font-medium">代理地址</label>
               <div className="min-w-0 space-y-2">
                 <input id="registry-proxy" disabled={busy} autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} type="text" inputMode="url" aria-describedby="registry-proxy-help" className="input min-h-[44px] sm:min-h-0 text-sm font-mono" placeholder="http://proxy.example:7890" value={form.httpsProxy || form.httpProxy || ''} onChange={event => {
                   const value = event.target.value
                   setDraft(current => ({ ...(current || form), httpProxy: value, httpsProxy: value }))
                 }} />
+                <p id="registry-proxy-help" className="text-xs text-gray-500 dark:text-gray-400">留空直连，保存后生效。</p>
                 {form.httpProxy !== form.httpsProxy && <p className="text-xs text-amber-600 dark:text-amber-400">原代理配置不同，当前显示 {form.httpsProxy ? 'HTTPS' : 'HTTP'} 代理；修改后将统一。</p>}
               </div>
             </div>

@@ -29,6 +29,7 @@ function AppContent() {
   const [dirty, setDirty] = useState(false)
   const [activeTab, setActiveTab] = useState('#compose')
   const [settingsSection, setSettingsSection] = useState('automation')
+  const dirtyName = activeTab === '#settings' ? (settingsSection === 'notifications' ? '消息推送设置' : '自动更新设置') : '项目文件'
   const [containerScope, setContainerScope] = useState(null)
   const [composeTarget, setComposeTarget] = useState(null)
   const [windowWidth, setWindowWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1024)
@@ -132,7 +133,7 @@ function AppContent() {
   }
 
   const handleLogout = async () => {
-    if (dirty && !await confirm({ title: '退出登录', message: `${activeTab === '#settings' ? '自动更新设置' : '项目文件'}有未保存的修改，退出后将丢失。`, confirmText: '放弃修改' })) return
+    if (dirty && !await confirm({ title: '退出登录', message: `${dirtyName}有未保存的修改，退出后将丢失。`, confirmText: '放弃修改' })) return
     setDirty(false)
     setContainerScope(null)
     setComposeTarget(null)
@@ -147,7 +148,7 @@ function AppContent() {
       if (tab === '#containers') setContainerScope(null)
       return true
     }
-    if (dirty && !await confirm({ title: '离开当前页面', message: `${activeTab === '#settings' ? '自动更新设置' : '项目文件'}有未保存的修改，离开后将丢失。`, confirmText: '放弃修改' })) return false
+    if (dirty && !await confirm({ title: '离开当前页面', message: `${dirtyName}有未保存的修改，离开后将丢失。`, confirmText: '放弃修改' })) return false
     setDirty(false)
     setContainerScope(null)
     setComposeTarget(null)
@@ -157,7 +158,7 @@ function AppContent() {
 
   const handleSettingsSectionChange = async (section) => {
     if (section === settingsSection) return true
-    if (dirty && !await confirm({ title: '切换设置分类', message: '自动更新设置有未保存的修改，切换后将丢失。', confirmText: '放弃修改' })) return false
+    if (dirty && !await confirm({ title: '切换设置分类', message: `${dirtyName}有未保存的修改，切换后将丢失。`, confirmText: '放弃修改' })) return false
     setDirty(false)
     setSettingsSection(section)
     return true
@@ -173,7 +174,7 @@ function AppContent() {
 
   const handleDeviceChange = async (id) => {
     if (id === deviceId) return true
-    if (dirty && !await confirm({ title: '切换设备', message: `${activeTab === '#settings' ? '自动更新设置' : '项目文件'}有未保存的修改，切换后将丢失。`, confirmText: '放弃修改' })) return false
+    if (dirty && !await confirm({ title: '切换设备', message: `${dirtyName}有未保存的修改，切换后将丢失。`, confirmText: '放弃修改' })) return false
     setDirty(false)
     setContainerScope(null)
     setComposeTarget(null)

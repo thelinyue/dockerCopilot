@@ -16,6 +16,7 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/onlyLTY/dockerCopilot/internal/module"
 	"github.com/onlyLTY/dockerCopilot/internal/node"
+	"github.com/onlyLTY/dockerCopilot/internal/notify"
 	"github.com/onlyLTY/dockerCopilot/internal/svc"
 )
 
@@ -186,6 +187,13 @@ func TestAutoUpdateContinuesAfterOneUpdateFails(t *testing.T) {
 	}
 	if registryChecks.Load() != 1 {
 		t.Fatal("同一次任务重复检测了相同镜像目标", registryChecks.Load())
+	}
+	notices := map[string]notify.Result{}
+	for _, notice := range p.NoticeResults {
+		notices[notice.Key+"/"+notice.Kind] = notice
+	}
+	if notices["container:failed/"+notify.UpdateFailed].Object != "failed" || notices["container:healthy/"+notify.UpdateSucceeded].Object != "healthy" || notices["container:healthy/"+notify.Available].Kind != "" {
+		t.Fatal("后续成功掩盖了失败，或成功对象仍列为待更新", p.NoticeResults)
 	}
 	release, err := s.Acquire(svc.OperationScope{})
 	if err != nil {

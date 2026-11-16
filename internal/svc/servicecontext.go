@@ -7,6 +7,7 @@ import (
 	"github.com/onlyLTY/dockerCopilot/internal/config"
 	"github.com/onlyLTY/dockerCopilot/internal/module"
 	"github.com/onlyLTY/dockerCopilot/internal/node"
+	"github.com/onlyLTY/dockerCopilot/internal/notify"
 	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/rest"
 	"sort"
@@ -35,19 +36,21 @@ type ServiceContext struct {
 }
 
 type TaskProgress struct {
-	TaskID     string        `json:"taskID"`
-	Percentage int           `json:"percentage"`
-	Message    string        `json:"message"`
-	Name       string        `json:"name"`
-	DetailMsg  string        `json:"detailMsg"`
-	IsDone     bool          `json:"isDone"`
-	Status     string        `json:"status"`
-	CreatedAt  time.Time     `json:"createdAt"`
-	UpdatedAt  time.Time     `json:"updatedAt"`
-	Resource   *TaskResource `json:"resource,omitempty"`
-	Action     string        `json:"action,omitempty"`
-	Cleanup    string        `json:"cleanup,omitempty"`
-	OldImages  []string      `json:"-"`
+	TaskID        string            `json:"taskID"`
+	Percentage    int               `json:"percentage"`
+	Message       string            `json:"message"`
+	Name          string            `json:"name"`
+	DetailMsg     string            `json:"detailMsg"`
+	IsDone        bool              `json:"isDone"`
+	Status        string            `json:"status"`
+	CreatedAt     time.Time         `json:"createdAt"`
+	UpdatedAt     time.Time         `json:"updatedAt"`
+	Resource      *TaskResource     `json:"resource,omitempty"`
+	Action        string            `json:"action,omitempty"`
+	Cleanup       string            `json:"cleanup,omitempty"`
+	OldImages     []string          `json:"-"`
+	Notification  *TaskNotification `json:"notification,omitempty"`
+	NoticeResults []notify.Result   `json:"-"`
 }
 
 type ProgressStoreType map[string]TaskProgress
@@ -82,6 +85,8 @@ func (ctx *ServiceContext) UpdateProgress(taskID string, progress TaskProgress) 
 		ctx.ProgressStore = make(ProgressStoreType)
 	}
 	previous := ctx.ProgressStore[taskID]
+	progress.NoticeResults = previous.NoticeResults
+	progress.Notification = previous.Notification
 	progress.TaskID = taskID
 	if progress.CreatedAt.IsZero() {
 		progress.CreatedAt = previous.CreatedAt
@@ -144,11 +149,14 @@ func (ctx *ServiceContext) RunTask(name string, scope OperationScope, action str
 		defer release()
 		defer func() {
 			if recover() != nil {
+				release()
 				p, _ := ctx.GetProgress(id)
 				p.IsDone = true
 				p.Status = "failed"
 				p.Message = "任务异常中断，请检查设备运行状态"
+				ctx.prepareNotification(id, action, p)
 				ctx.UpdateProgress(id, p)
+				ctx.finishNotification(id, action)
 			}
 		}()
 		err := fn(id)
@@ -170,10 +178,12 @@ func (ctx *ServiceContext) RunTask(name string, scope OperationScope, action str
 				p.Message += "；" + p.Cleanup
 			}
 		}
+		ctx.prepareNotification(id, action, p)
 		ctx.UpdateProgress(id, p)
 		if err != nil {
 			logx.Errorf("任务 %s 失败: %s", id, err)
 		}
+		ctx.finishNotification(id, action)
 	}()
 	return id, nil
 }

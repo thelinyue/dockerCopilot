@@ -23,6 +23,7 @@ import (
 	"github.com/docker/docker/api/types/image"
 	"github.com/google/uuid"
 	"github.com/onlyLTY/dockerCopilot/internal/node"
+	"github.com/onlyLTY/dockerCopilot/internal/notify"
 	"github.com/onlyLTY/dockerCopilot/internal/svc"
 	"github.com/onlyLTY/dockerCopilot/internal/utiles"
 	"gopkg.in/yaml.v3"
@@ -517,9 +518,40 @@ func (m *Manager) projectContainers(ctx context.Context, p Project, selected []s
 }
 
 func (m *Manager) ComposeAction(ctx context.Context, p Project, action string, selected []string, taskID string, preserveScale bool) error {
+	targets := append([]string{}, selected...)
+	images, counts := map[string]string{}, map[string]int{}
+	outcome := "failed"
+	succeeded := false
+	defer func() {
+		if action != "update" {
+			return
+		}
+		kind := notify.UpdateFailed
+		if succeeded {
+			kind, outcome = notify.UpdateSucceeded, "succeeded"
+		}
+		if len(targets) == 0 {
+			targets = []string{""}
+		}
+		for _, service := range targets {
+			name := strings.TrimSuffix(p.Name+"/"+service, "/")
+			m.Context.RecordNotice(taskID, notify.Result{Key: "service:" + name, Object: name, Image: images[service], Replicas: counts[service], Kind: kind, Outcome: outcome})
+		}
+	}()
 	model, err := m.model(ctx, p)
 	if err != nil {
 		return err
+	}
+	if len(targets) == 0 {
+		for service := range model.Services {
+			targets = append(targets, service)
+		}
+	}
+	for service, v := range model.Services {
+		images[service] = v.Image
+	}
+	for _, service := range p.Services {
+		counts[service.Name] = service.Total
 	}
 	for _, s := range selected {
 		if _, ok := model.Services[s]; !ok {
@@ -611,6 +643,11 @@ func (m *Manager) ComposeAction(ctx context.Context, p Project, action string, s
 					}
 				}
 			}
+			// 新增服务或规模变化时，以实际验证后的副本数生成通知。
+			counts = map[string]int{}
+			for _, v := range current {
+				counts[v.Config.Labels[serviceLabel]]++
+			}
 		}
 	}
 	if deployErr == nil {
@@ -618,6 +655,7 @@ func (m *Manager) ComposeAction(ctx context.Context, p Project, action string, s
 			m.Context.HubImageInfo.Delete(v.ID)
 			m.Context.ScheduleImageCleanup(taskID, v.Image)
 		}
+		succeeded = true
 		return nil
 	}
 	m.message(taskID, 75, "部署失败，正在恢复更新前的实际容器配置")
@@ -648,12 +686,14 @@ func (m *Manager) ComposeAction(ctx context.Context, p Project, action string, s
 	}
 	progress, _ := m.Context.GetProgress(taskID)
 	if recoverErr != nil {
+		outcome = "rollback_failed"
 		cleanup = false
 		progress.Status = "rollback_failed"
 		m.Context.UpdateProgress(taskID, progress)
 		return fmt.Errorf("部署失败且恢复失败: %v；恢复错误: %v。恢复资料保存在 %s", deployErr, recoverErr, snapshotPath)
 	}
 	progress.Status = "rolled_back"
+	outcome = "rolled_back"
 	m.Context.UpdateProgress(taskID, progress)
 	return fmt.Errorf("部署失败，已恢复更新前容器；项目文件保留当前编辑内容，卷内数据不回退: %v", deployErr)
 }

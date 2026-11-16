@@ -19,6 +19,7 @@ function TaskDetails({ task }) {
     {task.message && <p className="text-sm whitespace-pre-wrap break-words">{task.message}</p>}
     {task.detailMsg && task.detailMsg !== task.message && <pre className="p-3 rounded-lg bg-gray-50 dark:bg-gray-900 text-xs text-gray-600 dark:text-gray-400 whitespace-pre-wrap break-words">{task.detailMsg}</pre>}
     {task.cleanup && !task.message?.includes(task.cleanup) && <p className="text-xs text-gray-500 dark:text-gray-400 whitespace-pre-wrap break-words">{task.cleanup}</p>}
+    {task.notification && <p role="status" className={cn('text-xs whitespace-pre-wrap break-words', task.notification.status === 'failed' ? 'text-amber-600 dark:text-amber-400' : 'text-gray-500 dark:text-gray-400')}>{task.notification.message}</p>}
   </div>
 }
 
@@ -58,7 +59,7 @@ export function useTaskProgress(task) {
     queryKey: [deviceId, 'taskProgress', task?.taskID],
     queryFn: async () => (await progressAPI.getProgress(task.taskID)).data.data,
     enabled: !!task?.taskID,
-    refetchInterval: query => query.state.data?.isDone ? false : 2000,
+    refetchInterval: query => query.state.data?.isDone && query.state.data?.notification?.status !== 'sending' ? false : 2000,
     retry: false,
   })
   useEffect(() => {
