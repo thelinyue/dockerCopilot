@@ -11,7 +11,7 @@ PWA 的 `name`、`short_name` 与 iOS 主屏幕名称统一为 `Docker Copilot`�
 | 资源 | 实际尺寸 | 用途 |
 | --- | --- | --- |
 | `assets/dockercopilot-icon.png` | 1254 × 1254 | 选定原稿，后续导出的来源 |
-| `frontend/src/assets/DockerCopilot-logo.png` | 512 × 512 | 登录页、导航、关于页面 |
+| `frontend/src/assets/DockerCopilot-logo.png` | 512 × 512 | 登录页、导航 |
 | `frontend/public/logo.png` | 512 × 512 | PWA 普通图标及原有公开地址 |
 | `frontend/public/logo-192.png` | 192 × 192 | PWA 普通图标 |
 | `frontend/public/logo-maskable.png` | 512 × 512 | PWA 可裁切图标，四边各增加约 10% 留白 |

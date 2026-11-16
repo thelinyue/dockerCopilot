@@ -3,7 +3,7 @@ import {
   Box,
   LogOut,
   Server,
-  Boxes, Settings
+  Boxes, Settings, Github, MessageSquare
 } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { deviceAPI } from '../api/client.js'
@@ -310,6 +310,27 @@ export function Sidebar({ activeTab, onTabChange, onLogout, isCollapsed = false,
                 {versionError && <p className="text-[10px] text-amber-600 dark:text-amber-400 px-1 truncate" title={versionError}>版本检查不可用：{versionError}</p>}
               </div>
             )}
+
+            <nav aria-label="项目链接" className={cn('mt-3 flex gap-2', isCollapsed ? 'flex-col' : 'items-center px-1')}>
+              <a
+                href="https://github.com/thelinyue/dockerCopilot"
+                target="_blank"
+                rel="noopener noreferrer"
+                className={cn('btn min-h-[44px] whitespace-nowrap text-xs bg-gray-900 text-white hover:bg-gray-800 focus:ring-gray-500', isCollapsed ? 'w-full flex-col gap-1 px-1' : 'gap-1.5 px-2')}
+              >
+                <Github aria-hidden="true" className="h-4 w-4 flex-shrink-0" />
+                <span>项目源码</span>
+              </a>
+              <a
+                href="https://github.com/thelinyue/dockerCopilot/issues"
+                target="_blank"
+                rel="noopener noreferrer"
+                className={cn('btn min-h-[44px] whitespace-nowrap text-xs bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 hover:bg-blue-200 dark:hover:bg-blue-900/50 focus:ring-blue-500', isCollapsed ? 'w-full flex-col gap-1 px-1' : 'gap-1.5 px-2')}
+              >
+                <MessageSquare aria-hidden="true" className="h-4 w-4 flex-shrink-0" />
+                <span>问题反馈</span>
+              </a>
+            </nav>
           </div>
         </div>
       </aside>

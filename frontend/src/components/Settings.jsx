@@ -1,19 +1,17 @@
 import React from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Clock, Network, Box, Info } from 'lucide-react'
+import { Clock, Network, Box } from 'lucide-react'
 import { deviceAPI } from '../api/client.js'
 import { useDeviceAPI } from '../hooks/useDevice.jsx'
 import { cn } from '../utils/cn.js'
 import { Automation } from './Automation.jsx'
 import { Devices } from './Devices.jsx'
 import { Icons } from './Icons.jsx'
-import { About } from './About.jsx'
 
 const sections = [
   { id: 'automation', label: '自动更新', shortLabel: '自动更新', icon: Clock },
   { id: 'devices', label: '设备管理', shortLabel: '设备', icon: Network },
   { id: 'icons', label: '图标库', shortLabel: '图标', icon: Box },
-  { id: 'about', label: '关于', shortLabel: '关于', icon: Info },
 ]
 
 export function Settings({ section, onSectionChange, onDirty }) {
@@ -29,7 +27,7 @@ export function Settings({ section, onSectionChange, onDirty }) {
     // 切换内容会卸载原面板；新面板渲染后把焦点交还分类按钮。
     requestAnimationFrame(() => document.getElementById(`settings-tab-${accepted ? id : section}`)?.focus({ preventScroll: true }))
   }
-  const navigation = <div role="tablist" aria-label="设置分类" className="grid grid-cols-4 sm:flex gap-1 p-1 mb-4 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+  const navigation = <div role="tablist" aria-label="设置分类" className="grid grid-cols-3 sm:flex gap-1 p-1 mb-4 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
     {sections.map(({ id, label, shortLabel, icon: Icon }, index) => <button
       key={id}
       id={`settings-tab-${id}`}
@@ -63,6 +61,5 @@ export function Settings({ section, onSectionChange, onDirty }) {
     {section === 'automation' && <Automation layout={layout} onDirty={onDirty} />}
     {section === 'devices' && <Devices layout={layout} />}
     {section === 'icons' && <Icons layout={layout} />}
-    {section === 'about' && <About layout={layout} />}
   </div>
 }
