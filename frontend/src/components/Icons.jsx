@@ -155,8 +155,8 @@ export function Icons({ layout }) {
   const queryNotice = query.isError && <Notice>自定义图标读取失败：{query.error.message} <button type="button" disabled={query.isFetching} onClick={() => query.refetch()} className="underline disabled:opacity-50">重试</button></Notice>
   const showGlobalError = !selected && uploadTarget === null
   return <SettingsPanel {...layout} actions={<>
-    <button type="button" className="btn-secondary gap-2 disabled:opacity-50" disabled={query.isFetching || pending} onClick={() => query.refetch()}><RefreshCw className={cn('h-4 w-4', query.isFetching && 'animate-spin')} />刷新</button>
-    <button ref={uploadButton} type="button" className="btn-primary gap-2" onClick={() => startUpload(null)}><Upload className="h-4 w-4" />上传图标</button>
+    <button type="button" aria-label="刷新" title="刷新" className="btn-secondary page-action disabled:opacity-50" disabled={query.isFetching || pending} onClick={() => query.refetch()}><RefreshCw aria-hidden="true" className={cn('h-4 w-4', query.isFetching && 'animate-spin')} /><span className="hidden sm:inline">刷新</span></button>
+    <button ref={uploadButton} type="button" aria-label="上传图标" title="上传图标" className="btn-primary page-action" onClick={() => startUpload(null)}><Upload aria-hidden="true" className="h-4 w-4" /><span className="hidden sm:inline">上传图标</span></button>
   </>}>
     <div className="space-y-3">
       {queryNotice}

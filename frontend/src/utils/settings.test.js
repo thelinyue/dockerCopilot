@@ -17,6 +17,23 @@ test('网络、服务和未知错误保留集中提示，不按修改字段误�
   }
 })
 
+test('GitHub 加速地址单独校验、脱敏和规范化，不改写检测代理与计划', () => {
+  const original = { settings: { checkCron: '30 * * * *', updateCron: '0 3 * * *', httpProxy: 'http://registry:7890', githubProxy: '', keepOldContainer: false }, nextRuns: { schedule: 'next' } }
+  const patch = validateProxyPatch({ githubProxy: ' https://user:fixture-credential@mirror.example/prefix/// ' })
+  assert.equal(patch.githubProxy, 'https://user:fixture-credential@mirror.example/prefix')
+  const cached = applyAutomationPatch(original, { ...patch, keepOldContainer: true })
+  assert.equal(cached.settings.keepOldContainer, true)
+  assert.equal(cached.settings.httpProxy, original.settings.httpProxy)
+  assert.equal(cached.settings.updateCron, original.settings.updateCron)
+  assert.equal(JSON.stringify(cached).includes('fixture-credential'), false)
+  assert.match(cached.settings.githubProxy, /\*{8}/)
+  assert.throws(() => validateProxyPatch({ githubProxy: cached.settings.githubProxy }), /GitHub 加速地址包含密码掩码/)
+  assert.equal(settingsErrorTarget({ group: 'githubProxy', message: 'GitHub 加速地址无效，请填写 http(s)://主机:端口' }), 'githubProxy')
+  assert.deepEqual(validateProxyPatch({ githubProxy: '  ' }), { githubProxy: '' })
+  assert.equal(applyAutomationPatch(cached, { githubProxy: '' }).settings.githubProxy, '')
+  assert.deepEqual(changedFields(original.settings, { ...original.settings, keepOldContainer: true }, automationFields), { keepOldContainer: true })
+})
+
 test('自动更新仅提交实际修改字段，保留其他分类和旧 Cron', () => {
   const original = { checkCron: '0 3 * * *', updateCron: '0 3 * * *', httpsProxy: '', notifications: { enabled: false } }
   assert.deepEqual(changedFields(original, { ...original }, automationFields), {})

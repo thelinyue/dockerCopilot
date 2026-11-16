@@ -5,7 +5,7 @@ import { useDeviceAPI } from '../hooks/useDevice.jsx'
 import { cn } from '../utils/cn.js'
 import { getImageLogo } from '../config/imageLogos.js'
 import { useIcons } from '../hooks/useIcons.js'
-import { Notice } from './ManagementUI.jsx'
+import { Notice, PageHeader } from './ManagementUI.jsx'
 
 // 安全的图片组件
 function SafeImage({ src, alt, className, fallback }) {
@@ -26,7 +26,7 @@ function SafeImage({ src, alt, className, fallback }) {
   )
 }
 
-export function Images() {
+export function Images({ mobileActions, actionsRef, onActionsChange }) {
   const { imageAPI } = useDeviceAPI()
   const [images, setImages] = useState([])
   const [isLoading, setIsLoading] = useState(true)
@@ -108,6 +108,23 @@ export function Images() {
   }
 
   const pruneCandidates = type => images.filter(img => !img.inUsed && (type === 'unused' || img.tag === 'None' || img.tag === '<none>'))
+  const danglingCount = pruneCandidates('dangling').length
+  const unusedCount = pruneCandidates('unused').length
+  const openPrune = type => setPruneModal({ isOpen: true, type, images: pruneCandidates(type) })
+  // 与页头共用确认入口；底部菜单只打开预览，不直接执行清理。
+  React.useImperativeHandle(actionsRef, () => ({
+    dangling: () => openPrune('dangling'),
+    unused: () => openPrune('unused'),
+    refresh: () => fetchImages(),
+  }))
+  React.useLayoutEffect(() => {
+    onActionsChange?.({ page: '#images', label: '镜像操作', items: [
+      { id: 'dangling', label: '无Tag', ariaLabel: '清理无Tag镜像', icon: BrushCleaning, disabled: isLoading || !danglingCount },
+      { id: 'unused', label: '未使用', ariaLabel: '清理未使用镜像', icon: Trash2, disabled: isLoading || !unusedCount },
+      { id: 'refresh', label: '刷新', icon: RefreshCw, disabled: isLoading, busy: isLoading },
+    ] })
+  }, [onActionsChange, isLoading, danglingCount, unusedCount])
+  React.useLayoutEffect(() => () => onActionsChange?.(null), [onActionsChange])
 
   const formatImageSize = (sizeStr) => {
     if (!sizeStr) return '0 MB'
@@ -142,45 +159,37 @@ export function Images() {
     <div className="max-w-7xl mx-auto">
       {iconQuery.isError && <div className="px-2 sm:px-6 pt-4"><Notice>图标读取失败：{iconQuery.error.message} <button type="button" className="underline" onClick={() => iconQuery.refetch()}>重试</button></Notice></div>}
       {/* 页面头部 */}
-      <div className="px-2 sm:px-6 py-4 pt-4 sm:pt-4">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center space-y-4 sm:space-y-0">
-          <div>
-            <h2 className="text-2xl font-bold text-gray-900 dark:text-white">镜像管理</h2>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
+      <PageHeader title="镜像管理" className="px-2 sm:px-6">
+        {!mobileActions && <>
             <button
-              onClick={() => {
-                const imagesToDelete = pruneCandidates('dangling')
-                setPruneModal({ isOpen: true, type: 'dangling', images: imagesToDelete })
-              }}
-              disabled={isLoading || pruneCandidates('dangling').length === 0}
-              className="flex items-center gap-2 px-4 py-2 bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-200 rounded-lg hover:bg-orange-200 dark:hover:bg-orange-800 transition-colors disabled:opacity-50 text-sm font-medium"
+              type="button" aria-label="清理无Tag镜像" title="清理无Tag镜像"
+              onClick={() => openPrune('dangling')}
+              disabled={isLoading || !danglingCount}
+              className="btn page-action bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-200 hover:bg-orange-200 dark:hover:bg-orange-800 focus:ring-orange-500 disabled:opacity-50"
             >
-              <BrushCleaning className="h-4 w-4" />
-              <span>无Tag</span>
+              <BrushCleaning aria-hidden="true" className="h-4 w-4" />
+              <span className="hidden sm:inline">无Tag</span>
             </button>
             <button
-              onClick={() => {
-                const imagesToDelete = pruneCandidates('unused')
-                setPruneModal({ isOpen: true, type: 'unused', images: imagesToDelete })
-              }}
-              disabled={isLoading || pruneCandidates('unused').length === 0}
-              className="flex items-center gap-2 px-4 py-2 bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-200 rounded-lg hover:bg-purple-200 dark:hover:bg-purple-800 transition-colors disabled:opacity-50 text-sm font-medium"
+              type="button" aria-label="清理未使用镜像" title="清理未使用镜像"
+              onClick={() => openPrune('unused')}
+              disabled={isLoading || !unusedCount}
+              className="btn page-action bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-200 hover:bg-purple-200 dark:hover:bg-purple-800 focus:ring-purple-500 disabled:opacity-50"
             >
-              <BrushCleaning className="h-4 w-4" />
-              <span>未使用</span>
+              <Trash2 aria-hidden="true" className="h-4 w-4" />
+              <span className="hidden sm:inline">未使用</span>
             </button>
             <button
+              type="button" aria-label="刷新" title="刷新"
               onClick={fetchImages}
               disabled={isLoading}
-              className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 text-sm font-medium"
+              className="btn-primary page-action disabled:opacity-50"
             >
-              <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
-              <span>刷新</span>
+              <RefreshCw aria-hidden="true" className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+              <span className="hidden sm:inline">刷新</span>
             </button>
-          </div>
-        </div>
-      </div>
+        </>}
+      </PageHeader>
 
       {/* 状态消息 */}
       {error && (
@@ -254,7 +263,7 @@ export function Images() {
       )}
 
       {/* 统计信息 */}
-      <div className="px-2 sm:px-6 py-4">
+      <div className="px-2 sm:px-6 pt-0 pb-3 sm:py-3">
         <div className="grid grid-cols-4 gap-0 rounded-3xl overflow-hidden shadow-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
           {/* 总镜像数 */}
           <button
@@ -349,7 +358,7 @@ export function Images() {
       )}
 
       {/* 镜像网格 */}
-      <div className="px-2 sm:px-6 py-4">
+      <div className="px-2 sm:px-6 pt-0 pb-4 sm:py-3">
         {images.length === 0 ? (
           <div className="card p-12 text-center rounded-2xl">
             <HardDrive className="h-12 w-12 text-gray-300 dark:text-gray-600 mx-auto mb-4" />

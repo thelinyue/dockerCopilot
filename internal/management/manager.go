@@ -129,7 +129,7 @@ func (m *Manager) checkContainer(ctx context.Context, v docker.ContainerJSON, im
 		result.CheckedAt = time.Now()
 		local, _, err := m.Context.DockerClient.ImageInspectWithRaw(ctx, v.Image)
 		if err == nil {
-			client := module.RegistryClient(m.Context.Settings.Get())
+			client := module.ProxyClient(m.Context.Settings.Get())
 			defer client.CloseIdleConnections()
 			result.NeedUpdate, err = module.CheckReference(ctx, client, imageRef, v.Image, local.Os, local.Architecture, local.Variant)
 		}

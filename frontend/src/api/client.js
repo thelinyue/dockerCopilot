@@ -136,7 +136,7 @@ export function createDeviceAPI(deviceId = 'local') {
       const formData = new FormData()
       formData.append('containerName', containerName)
       formData.append('imageNameAndTag', imageNameAndTag)
-      formData.append('delOldContainer', delOldContainer ? 'true' : 'false')
+      if (delOldContainer !== undefined) formData.append('delOldContainer', delOldContainer ? 'true' : 'false')
       return scopedClient.post(`/api/container/${id}/update`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       })

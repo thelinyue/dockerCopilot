@@ -1,4 +1,4 @@
-export const automationFields = ['checkCron', 'updateCron', 'startupCheck', 'autoUpdate', 'excludedContainers', 'excludedServices', 'httpProxy', 'httpsProxy']
+export const automationFields = ['checkCron', 'updateCron', 'startupCheck', 'autoUpdate', 'excludedContainers', 'excludedServices', 'httpProxy', 'httpsProxy', 'keepOldContainer', 'githubProxy']
 
 // 现有接口只返回错误文字；仅将已知校验提示关联到输入项，其余错误集中展示。
 export function settingsErrorTarget({ group, message }) {
@@ -6,6 +6,7 @@ export function settingsErrorTarget({ group, message }) {
   if (message.startsWith('Bark 服务器地址无效')) return 'serverURL'
   if (message.startsWith('定时表达式')) return ['checkCron', 'updateCron'].includes(group) ? group : 'schedule'
   if (message.startsWith('代理地址无效') || message.startsWith('代理地址包含密码掩码')) return 'proxy'
+  if (message.startsWith('GitHub 加速地址')) return 'githubProxy'
   return undefined
 }
 
@@ -15,11 +16,12 @@ export function changedFields(original, draft, fields = Object.keys(draft)) {
 }
 
 export function validateProxyPatch(patch) {
-  for (const key of ['httpProxy', 'httpsProxy']) {
+  if (typeof patch.githubProxy === 'string') patch = { ...patch, githubProxy: patch.githubProxy.trim().replace(/\/+$/, '') }
+  for (const key of ['httpProxy', 'httpsProxy', 'githubProxy']) {
     if (!(key in patch)) continue
     let credential
     try { credential = decodeURIComponent(new URL(patch[key]).password) } catch { continue /* 地址格式由服务端校验。 */ }
-    if (credential === '********') throw new Error('代理地址包含密码掩码，修改代理时请重新填写完整地址和密码。')
+    if (credential === '********') throw new Error(`${key === 'githubProxy' ? 'GitHub 加速地址' : '代理地址'}包含密码掩码，修改时请重新填写完整地址和密码。`)
   }
   return patch
 }
@@ -30,7 +32,7 @@ export function applyAutomationPatch(data, patch) {
     const cron = patch.checkCron ?? patch.updateCron ?? (data.settings.autoUpdate ? data.settings.updateCron : data.settings.checkCron)
     publicPatch.checkCron = publicPatch.updateCron = cron
   }
-  for (const key of ['httpProxy', 'httpsProxy']) {
+  for (const key of ['httpProxy', 'httpsProxy', 'githubProxy']) {
     if (!publicPatch[key]) continue
     let url
     try { url = new URL(publicPatch[key]) } catch {
@@ -43,6 +45,7 @@ export function applyAutomationPatch(data, patch) {
       publicPatch[key] = url.toString()
     }
   }
+  if (publicPatch.githubProxy) publicPatch.githubProxy = publicPatch.githubProxy.trim().replace(/\/+$/, '')
   return { ...data, settings: { ...data.settings, ...publicPatch } }
 }
 

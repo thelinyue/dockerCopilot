@@ -14,6 +14,7 @@ import { UpdatePrompt } from './UpdatePrompt.jsx'
 import { cn } from '../utils/cn.js'
 import logoImg from '../assets/DockerCopilot-mark.svg'
 import { useVersionCheck } from '../hooks/useVersionCheck.js'
+import { GlassTabMenu } from './leibox/glass-tab-menu/GlassTabMenu.jsx'
 
 const navItems = [
   { id: '#compose', label: '项目', icon: Boxes },
@@ -310,44 +311,6 @@ export function Sidebar({ activeTab, onTabChange, onLogout, isCollapsed = false,
 }
 
 // 手机底部导航栏组件
-export function MobileBottomNav({ activeTab, onTabChange, windowWidth = 1024 }) {
-  return (
-    <>
-      {windowWidth < 768 && (
-        <nav
-          aria-label="手机导航"
-          className="mobile-bottom-nav fixed mx-auto max-w-sm bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-full z-40 shadow-lg transition-all duration-300"
-          style={{ 
-            left: 'max(1rem, var(--safe-area-left))',
-            right: 'max(1rem, var(--safe-area-right))',
-            bottom: 'calc(var(--safe-area-bottom) + 0.5rem)'
-          }}
-        >
-          <div className="h-full flex items-center justify-around px-2 py-2 gap-1">
-            {navItems.map((item) => {
-              const Icon = item.icon
-              const isActive = activeTab === item.id
-              return (
-                <button
-                  key={item.id}
-                  aria-current={isActive ? 'page' : undefined}
-                  onClick={() => onTabChange(item.id)}
-                  className={cn(
-                    "h-12 flex flex-col items-center justify-center gap-0.5 px-1.5 rounded-full transition-all duration-200 active:scale-95 flex-1 min-w-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500",
-                    isActive
-                      ? "text-primary-600 dark:text-primary-400 bg-primary-100 dark:bg-primary-900/40"
-                      : "text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700/50"
-                  )}
-                  title={item.label}
-                >
-                  <Icon className="h-5 w-5 flex-shrink-0" />
-                  <span className="text-xs font-medium">{item.label}</span>
-                </button>
-              )
-            })}
-          </div>
-        </nav>
-      )}
-    </>
-  )
+export function MobileBottomNav({ activeTab, onTabChange, windowWidth = 1024, batch, actions }) {
+  return windowWidth < 768 ? <GlassTabMenu items={navItems} activeTab={activeTab} onTabChange={onTabChange} batch={batch} actions={actions} /> : null
 }

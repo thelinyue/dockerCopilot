@@ -66,7 +66,8 @@ func (i *ImageUpdateData) Retain(ids []string) {
 	}
 }
 
-func RegistryClient(settings node.Settings) *http.Client {
+// 镜像检测与 GitHub 查询、下载共用设备保存的代理；空值直连，不回退到进程环境。
+func ProxyClient(settings node.Settings) *http.Client {
 	proxy := (&httpproxy.Config{HTTPProxy: settings.HTTPProxy, HTTPSProxy: settings.HTTPSProxy}).ProxyFunc()
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = func(r *http.Request) (*url.URL, error) { return proxy(r.URL) }

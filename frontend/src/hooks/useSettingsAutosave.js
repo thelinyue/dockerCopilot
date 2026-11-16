@@ -3,14 +3,14 @@ import { isCancelledError, useQuery, useQueryClient } from '@tanstack/react-quer
 import { useDeviceAPI } from './useDevice.jsx'
 import { createAutosave } from '../utils/autosave.js'
 
-export function useSettingsAutosave({ select, encode = value => value, apply, enabled = true, onDirty, beforeLeave, retryAfter }) {
+export function useSettingsAutosave({ select, encode = value => value, apply, enabled = true, onDirty, beforeLeave, retryAfter, onSaved }) {
   const { deviceId, managementAPI } = useDeviceAPI()
   const queryClient = useQueryClient()
   const queryKey = [deviceId, 'settings']
   const query = useQuery({ queryKey, queryFn: managementAPI.settings, enabled, select })
   const [refreshFailure, setRefreshFailure] = useState('')
   const options = useRef()
-  options.current = { select, encode, apply, onDirty, retryAfter }
+  options.current = { select, encode, apply, onDirty, retryAfter, onSaved }
   const mounted = useRef(true)
   const [controller] = useState(() => createAutosave({
     initial: query.data?.settings,
@@ -34,7 +34,10 @@ export function useSettingsAutosave({ select, encode = value => value, apply, en
       })
       return select(publicData).settings
     },
-    onSaved: group => options.current.retryAfter?.[group]?.forEach(key => controller.retry(key)),
+    onSaved: group => {
+      options.current.retryAfter?.[group]?.forEach(key => controller.retry(key))
+      options.current.onSaved?.(group)
+    },
   }))
   const [state, setState] = useState(() => controller.snapshot())
   useEffect(() => controller.subscribe(next => {

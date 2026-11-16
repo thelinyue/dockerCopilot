@@ -19,6 +19,8 @@ import (
 	"time"
 
 	"github.com/onlyLTY/dockerCopilot/internal/config"
+	"github.com/onlyLTY/dockerCopilot/internal/module"
+	"github.com/onlyLTY/dockerCopilot/internal/node"
 	"github.com/onlyLTY/dockerCopilot/internal/svc"
 	"golang.org/x/mod/semver"
 )
@@ -27,8 +29,9 @@ const releaseRepository = "thelinyue/dockerCopilot"
 
 var releaseCache struct {
 	sync.Mutex
-	release programRelease
-	until   time.Time
+	release                       programRelease
+	until                         time.Time
+	prefix, httpProxy, httpsProxy string
 }
 
 type programRelease struct {
@@ -41,25 +44,35 @@ type programRelease struct {
 	} `json:"assets"`
 }
 
-func githubAddress(address string) string {
-	prefix := strings.TrimRight(os.Getenv("githubProxy"), "/")
+func githubAddress(prefix, address string) string {
+	prefix = strings.TrimRight(strings.TrimSpace(prefix), "/")
 	if prefix != "" {
 		return prefix + "/" + address
 	}
 	return address
 }
-func programClient() *http.Client {
-	return &http.Client{Timeout: 60 * time.Second, Transport: &http.Transport{Proxy: nil}}
+func programClient(settings node.Settings) *http.Client {
+	// GitHub 加速服务优先直连；没有加速前缀时才使用共享代理访问 GitHub。
+	if strings.TrimSpace(settings.GithubProxy) != "" {
+		settings.HTTPProxy, settings.HTTPSProxy = "", ""
+	}
+	client := module.ProxyClient(settings)
+	client.Timeout = 60 * time.Second
+	return client
 }
-func latestProgramRelease() (programRelease, error) {
+func latestProgramRelease(settings node.Settings) (programRelease, error) {
+	prefix := strings.TrimRight(strings.TrimSpace(settings.GithubProxy), "/")
 	releaseCache.Lock()
 	defer releaseCache.Unlock()
-	if time.Now().Before(releaseCache.until) {
+	sameProxy := prefix != "" || (settings.HTTPProxy == releaseCache.httpProxy && settings.HTTPSProxy == releaseCache.httpsProxy)
+	if prefix == releaseCache.prefix && sameProxy && time.Now().Before(releaseCache.until) {
 		return releaseCache.release, nil
 	}
-	resp, err := programClient().Get(githubAddress("https://api.github.com/repos/" + releaseRepository + "/releases/latest"))
+	client := programClient(settings)
+	defer client.CloseIdleConnections()
+	resp, err := client.Get(githubAddress(prefix, "https://api.github.com/repos/"+releaseRepository+"/releases/latest"))
 	if err != nil {
-		return programRelease{}, fmt.Errorf("无法读取本仓库正式版本，请检查网络或 githubProxy")
+		return programRelease{}, fmt.Errorf("无法读取本仓库正式版本，请检查网络代理或 GitHub 加速地址")
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
@@ -70,10 +83,16 @@ func latestProgramRelease() (programRelease, error) {
 		return r, fmt.Errorf("正式版本信息无效")
 	}
 	releaseCache.release = r
+	releaseCache.prefix = prefix
+	releaseCache.httpProxy = settings.HTTPProxy
+	releaseCache.httpsProxy = settings.HTTPSProxy
 	releaseCache.until = time.Now().Add(5 * time.Minute)
 	return r, nil
 }
-func GetRemoteVersion() (string, error) { r, err := latestProgramRelease(); return r.Tag, err }
+func GetRemoteVersion(settings node.Settings) (string, error) {
+	r, err := latestProgramRelease(settings)
+	return r.Tag, err
+}
 func HasNewProgramVersion(current, remote string) bool {
 	return semver.IsValid(remote) && semver.IsValid(current) && semver.Compare(remote, current) > 0
 }
@@ -82,7 +101,9 @@ func UpdateProgram(s *svc.ServiceContext) error {
 	if strings.HasSuffix(config.Version, "-dev") {
 		return fmt.Errorf("开发版本请通过构建或升级容器镜像更新")
 	}
-	r, err := latestProgramRelease()
+	// 查询和下载共用同一份设置快照，避免下载期间改设置导致地址来源不一致。
+	settings := s.Settings.Get()
+	r, err := latestProgramRelease(settings)
 	if err != nil {
 		return err
 	}
@@ -110,13 +131,15 @@ func UpdateProgram(s *svc.ServiceContext) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, "GET", githubAddress(address), nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", githubAddress(settings.GithubProxy, address), nil)
 	if err != nil {
 		return err
 	}
-	resp, err := programClient().Do(req)
+	client := programClient(settings)
+	defer client.CloseIdleConnections()
+	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("下载正式版本失败，请检查 githubProxy")
+		return fmt.Errorf("下载正式版本失败，请检查网络代理或 GitHub 加速地址")
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {

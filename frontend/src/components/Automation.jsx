@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { RefreshCw, Clock, History, ShieldOff, Network, Play } from 'lucide-react'
+import { RefreshCw, Clock, History, ShieldOff, Network, Play, Archive } from 'lucide-react'
 import { useDeviceAPI } from '../hooks/useDevice.jsx'
 import { AutosaveFeedback, AutosaveStatus, Notice, SettingsPanel, useConfirmation } from './ManagementUI.jsx'
 import { useSettingsAutosave } from '../hooks/useSettingsAutosave.js'
@@ -41,7 +41,10 @@ export function Automation({ layout, onDirty, beforeLeave }) {
   const { deviceId, managementAPI, containerAPI } = useDeviceAPI()
   const queryClient = useQueryClient()
   const confirm = useConfirmation()
-  const autosave = useSettingsAutosave({ select: selectSettings, encode: validateProxyPatch, apply: applyAutomationPatch, onDirty, beforeLeave })
+  const autosave = useSettingsAutosave({
+    select: selectSettings, encode: validateProxyPatch, apply: applyAutomationPatch, onDirty, beforeLeave,
+    onSaved: group => { if (group === 'proxy' || group === 'githubProxy') void queryClient.invalidateQueries({ queryKey: [deviceId, 'version'] }) },
+  })
   const { data, error, isLoading, form, dirty } = autosave
   const { data: projectData, error: projectError, isLoading: projectsLoading } = useQuery({ queryKey: [deviceId, 'composeProjects'], queryFn: managementAPI.projects, retry: false })
   const { data: containers = [], error: containerError, isLoading: containersLoading } = useQuery({ queryKey: [deviceId, 'containers'], queryFn: async () => (await containerAPI.getContainers()).data.data || [], retry: false })
@@ -75,11 +78,11 @@ export function Automation({ layout, onDirty, beforeLeave }) {
   const setExclusion = (option, selected) => autosave.change('exclusions', changeExclusion(form, option, selected))
   return (
     <SettingsPanel {...layout} status={<AutosaveStatus autosave={autosave} />} actions={
-      <button type="button" className="btn-secondary gap-2" onClick={() => setHistoryOpen(true)}><History className="h-4 w-4" />执行记录</button>
+      <button type="button" aria-label="执行记录" title="执行记录" className="btn-secondary page-action" onClick={() => setHistoryOpen(true)}><History aria-hidden="true" className="h-4 w-4" /><span className="hidden sm:inline">执行记录</span></button>
     }>
       <div className="space-y-4">
         <Notice onClose={failure ? () => setFailure('') : undefined}>{failure || (!form && error?.message)}</Notice>
-        <AutosaveFeedback autosave={autosave} fields={data?.unified ? ['schedule', 'proxy'] : ['checkCron', 'updateCron', 'proxy']} />
+        <AutosaveFeedback autosave={autosave} fields={data?.unified ? ['schedule', 'proxy', 'githubProxy'] : ['checkCron', 'updateCron', 'proxy', 'githubProxy']} />
         <Notice type="warning">{autosave.refreshFailure}</Notice>
         {isLoading && <div className="card p-6 animate-pulse h-48" />}
         {form && <form id="automation-settings" onSubmit={event => { event.preventDefault(); void autosave.flush() }} className="space-y-4">
@@ -134,17 +137,31 @@ export function Automation({ layout, onDirty, beforeLeave }) {
             </div>
           </section>
           <section className="card rounded-2xl overflow-hidden">
-            <div className="px-4 sm:px-6 py-4 border-b border-gray-200 dark:border-gray-700"><h3 className="font-semibold flex items-center gap-2"><Network className="h-5 w-5 text-primary-600 dark:text-primary-400" />检测代理</h3></div>
-            <div className="px-4 sm:px-6 py-4 grid sm:grid-cols-[auto_minmax(0,1fr)] items-start gap-x-4 gap-y-2">
+            <div className="px-4 sm:px-6 py-4 border-b border-gray-200 dark:border-gray-700"><h3 className="font-semibold flex items-center gap-2"><Archive className="h-5 w-5 text-primary-600 dark:text-primary-400" />独立容器更新</h3></div>
+            <div className="px-4 sm:px-6 py-4 space-y-2">
+              <label className="min-h-[44px] flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" className={checkbox} disabled={busy || typeof form.keepOldContainer !== 'boolean'} checked={form.keepOldContainer ?? false} onChange={event => change('keepOldContainer', event.target.checked)} />保留更新前的旧容器
+              </label>
+              {typeof form.keepOldContainer !== 'boolean' && <p className="text-xs text-amber-600 dark:text-amber-400">请升级当前设备后配置旧容器保留策略。</p>}
+            </div>
+          </section>
+          <section className="card rounded-2xl overflow-hidden">
+            <div className="px-4 sm:px-6 py-4 border-b border-gray-200 dark:border-gray-700"><h3 className="font-semibold flex items-center gap-2"><Network className="h-5 w-5 text-primary-600 dark:text-primary-400" />网络设置</h3></div>
+            <div className="px-4 sm:px-6 py-4 grid sm:grid-cols-[auto_minmax(0,1fr)] items-start gap-x-4 gap-y-3">
               <label htmlFor="registry-proxy" className="block sm:flex sm:items-center sm:min-h-[38px] text-sm font-medium">代理地址</label>
               <div className="min-w-0 space-y-2">
-                <input id="registry-proxy" disabled={busy} autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} type="text" inputMode="url" aria-invalid={invalid('proxy') || undefined} aria-describedby={`registry-proxy-help${invalid('proxy') ? ' registry-proxy-error' : ''}`} className={`input min-h-[44px] sm:min-h-0 text-sm font-mono ${invalid('proxy') ? 'border-red-400 dark:border-red-500 focus:ring-red-500' : ''}`} placeholder="http://proxy.example:7890" value={form.httpsProxy || form.httpProxy || ''} {...autosave.inputProps('proxy')} onChange={event => {
+                <input id="registry-proxy" disabled={busy} autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} type="text" inputMode="url" aria-invalid={invalid('proxy') || undefined} aria-describedby={invalid('proxy') ? 'registry-proxy-error' : undefined} className={`input min-h-[44px] sm:min-h-0 text-sm font-mono ${invalid('proxy') ? 'border-red-400 dark:border-red-500 focus:ring-red-500' : ''}`} placeholder="http://proxy.example:7890" value={form.httpsProxy || form.httpProxy || ''} {...autosave.inputProps('proxy')} onChange={event => {
                   const value = event.target.value
                   autosave.change('proxy', { httpProxy: value, httpsProxy: value }, 500)
                 }} />
-                <p id="registry-proxy-help" className="text-xs text-gray-500 dark:text-gray-400">修改后自动保存，留空直连。</p>
                 <AutosaveFeedback autosave={autosave} target="proxy" id="registry-proxy-error" />
-                {form.httpProxy !== form.httpsProxy && <p className="text-xs text-amber-600 dark:text-amber-400">原代理配置不同，当前显示 {form.httpsProxy ? 'HTTPS' : 'HTTP'} 代理；修改后将统一。</p>}
+                {form.httpProxy !== form.httpsProxy && <p className="text-xs text-amber-600 dark:text-amber-400">HTTP/HTTPS 配置不同，修改后统一。</p>}
+              </div>
+              <label htmlFor="github-proxy" className="block sm:flex sm:items-center sm:min-h-[38px] text-sm font-medium">GitHub 加速地址</label>
+              <div className="min-w-0 space-y-2">
+                <input id="github-proxy" disabled={busy || typeof form.githubProxy !== 'string'} autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} type="text" inputMode="url" aria-invalid={invalid('githubProxy') || undefined} aria-describedby={invalid('githubProxy') ? 'github-proxy-error' : undefined} className={`input min-h-[44px] sm:min-h-0 text-sm font-mono ${invalid('githubProxy') ? 'border-red-400 dark:border-red-500 focus:ring-red-500' : ''}`} placeholder="https://github-proxy.example" value={form.githubProxy ?? ''} {...autosave.inputProps('githubProxy')} onChange={event => change('githubProxy', event.target.value, 500)} />
+                <AutosaveFeedback autosave={autosave} target="githubProxy" id="github-proxy-error" />
+                {typeof form.githubProxy !== 'string' && <p className="text-xs text-amber-600 dark:text-amber-400">请升级当前设备后配置 GitHub 加速地址。</p>}
               </div>
             </div>
           </section>

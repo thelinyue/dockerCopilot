@@ -8,7 +8,6 @@ import (
 	"github.com/onlyLTY/dockerCopilot/internal/types"
 	"github.com/onlyLTY/dockerCopilot/internal/utiles"
 	"github.com/zeromicro/go-zero/core/logx"
-	"os"
 	"strings"
 )
 
@@ -41,7 +40,7 @@ func (l *UpdateLogic) Update(req *types.ContainerUpdateReq) (resp *types.Resp, e
 			return err
 		}
 		imageNameAndTag := req.ImageNameAndTag
-		delOldContainer := os.Getenv("DelOldContainer") != "false"
+		delOldContainer := !l.svcCtx.Settings.Get().KeepOldContainer
 		if req.DelOldContainer == "false" {
 			delOldContainer = false
 		}

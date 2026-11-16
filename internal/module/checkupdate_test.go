@@ -69,7 +69,7 @@ func TestPlatformManifestAndAuthenticationUseProxy(t *testing.T) {
 		io.Copy(connection, upstream)
 	}))
 	defer proxy.Close()
-	client := RegistryClient(node.Settings{HTTPSProxy: proxy.URL})
+	client := ProxyClient(node.Settings{HTTPSProxy: proxy.URL})
 	transport := client.Transport.(*http.Transport)
 	transport.TLSClientConfig = registry.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
 	transport.TLSClientConfig.ServerName = "example.com"
@@ -92,7 +92,7 @@ func TestPlatformManifestAndAuthenticationUseProxy(t *testing.T) {
 }
 
 func TestRegistryTLSValidationAndPinnedReference(t *testing.T) {
-	client := RegistryClient(node.Settings{})
+	client := ProxyClient(node.Settings{})
 	if transport := client.Transport.(*http.Transport); transport.TLSClientConfig != nil && transport.TLSClientConfig.InsecureSkipVerify {
 		t.Fatal("TLS verification disabled")
 	}

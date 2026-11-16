@@ -129,8 +129,8 @@ export function Devices({ layout }) {
   }
   return (
     <SettingsPanel {...layout} actions={<>
-        <button type="button" className="btn-secondary gap-2 disabled:opacity-50" disabled={isFetching || busy} onClick={() => refetch()}><RefreshCw className={cn('h-4 w-4', isFetching && 'animate-spin')} />刷新</button>
-        <button type="button" className="btn-primary gap-2" onClick={() => edit()}><Plus className="h-4 w-4" />添加设备</button>
+        <button type="button" aria-label="刷新" title="刷新" className="btn-secondary page-action disabled:opacity-50" disabled={isFetching || busy} onClick={() => refetch()}><RefreshCw aria-hidden="true" className={cn('h-4 w-4', isFetching && 'animate-spin')} /><span className="hidden sm:inline">刷新</span></button>
+        <button type="button" aria-label="添加设备" title="添加设备" className="btn-primary page-action" onClick={() => edit()}><Plus aria-hidden="true" className="h-4 w-4" /><span className="hidden sm:inline">添加设备</span></button>
       </>}>
       <div className="space-y-4">
         <Notice>{failure || error?.message}</Notice>

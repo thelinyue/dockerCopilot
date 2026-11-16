@@ -112,6 +112,16 @@ DOCKERCOPILOT_PRUNE_RUNNER=/tmp/copilot-prune-runner \
   go test ./internal/management -run '^TestIsolatedImagePrune$' -v -timeout 3m
 ```
 
+旧容器保留策略另有离线生命周期用例，复用前文的静态 runner 和独立 daemon：
+
+```sh
+DOCKERCOPILOT_INTEGRATION_HOST=unix:///var/tmp/dockercopilot-it-retention-example/docker.sock \
+DOCKERCOPILOT_PRUNE_RUNNER=/tmp/copilot-prune-runner \
+  go test ./internal/management -run '^TestIsolatedRuntimeRetention$' -v -timeout 3m
+```
+
+该用例从 scratch 构建本地 fixture，不拉取公网镜像，覆盖手动更新读取持久化策略、旧容器改名保留、默认删除及启动失败恢复。GitHub 测试使用本地 HTTP/HTTPS 服务与 CONNECT 代理验证路由优先级和缓存；Linux 环境还会用测试 ELF 验证完整包下载与暂存，不安装或重启程序。
+
 消息推送测试默认使用本地模拟 HTTP 服务，覆盖事件开关、汇总、恢复状态、密钥隐藏、重定向拒绝及超时。可对独立 Bark 服务端显式运行实际联调：
 
 ```sh

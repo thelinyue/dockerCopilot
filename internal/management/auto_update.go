@@ -3,7 +3,6 @@ package management
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
 	docker "github.com/docker/docker/api/types"
@@ -127,7 +126,7 @@ func (m *Manager) autoUpdateContainer(ctx context.Context, id, containerID strin
 		return v.Name + ": 已是最新镜像", nil
 	}
 	updating = true
-	if err := utiles.UpdateContainer(m.Context, v.ID, v.Name, v.Config.Image, os.Getenv("DelOldContainer") != "false", id); err != nil {
+	if err := utiles.UpdateContainer(m.Context, v.ID, v.Name, v.Config.Image, !s.KeepOldContainer, id); err != nil {
 		return v.Name + ": " + err.Error(), err
 	}
 	return v.Name + ": 已更新", nil

@@ -4,7 +4,7 @@ import { Boxes, RefreshCw, Save, FolderOpen, Plus, Play, Square, RotateCcw, Down
 import { useDeviceAPI } from '../hooks/useDevice.jsx'
 import { cn } from '../utils/cn.js'
 import { useResourceTasks, projectResource } from '../hooks/useResourceTasks.js'
-import { Dialog, Notice, UpdateBadge, useConfirmation } from './ManagementUI.jsx'
+import { Dialog, Notice, PageHeader, UpdateBadge, useConfirmation } from './ManagementUI.jsx'
 
 const actionLabels = { start: '启动', stop: '停止', restart: '重启', pull: '拉取镜像', deploy: '部署', update: '拉取并更新' }
 const actionProgressLabels = { start: '启动中', stop: '停止中', restart: '重启中', pull: '拉取中', deploy: '部署中', update: '更新中' }
@@ -67,7 +67,7 @@ function ComposeActionMenu({ items, disabled, onAction }) {
   </div>
 }
 
-export function Compose({ onDirty, initialTarget, onOpenContainers }) {
+export function Compose({ onDirty, initialTarget, onOpenContainers, mobileActions, actionsRef, onActionsChange }) {
   const { deviceId, containerAPI, managementAPI } = useDeviceAPI()
   const queryClient = useQueryClient()
   const confirm = useConfirmation()
@@ -97,6 +97,18 @@ export function Compose({ onDirty, initialTarget, onOpenContainers }) {
   const [importName, setImportName] = useState('')
   const [importFiles, setImportFiles] = useState('')
   const [importError, setImportError] = useState('')
+  const refreshing = isFetching || fetchingContainers
+  const openImport = () => { setImportError(''); setImportOpen(true) }
+  const refreshProjects = () => { refetch(); refreshContainers() }
+  // 页面保留实际回调，底部只接收显示状态，避免刷新后仍调用旧设备或旧状态。
+  React.useImperativeHandle(actionsRef, () => ({ import: openImport, refresh: refreshProjects }))
+  React.useLayoutEffect(() => {
+    onActionsChange?.({ page: '#compose', label: '项目操作', items: [
+      { id: 'import', label: '接管项目', icon: Plus },
+      { id: 'refresh', label: '刷新', icon: RefreshCw, disabled: busy || refreshing, busy: refreshing },
+    ] })
+  }, [onActionsChange, busy, refreshing])
+  React.useLayoutEffect(() => () => onActionsChange?.(null), [onActionsChange])
   const { getTask, submitOperation, error: taskReadError, refresh: refreshProgress, isFetching: fetchingProgress } = useResourceTasks()
   const requestNumber = useRef(0)
   const openedTarget = useRef(null)
@@ -262,13 +274,14 @@ export function Compose({ onDirty, initialTarget, onOpenContainers }) {
   }
   return (
     <div className="max-w-7xl mx-auto text-gray-900 dark:text-gray-100">
-      <div className="px-2 sm:px-6 py-4 flex flex-col sm:flex-row justify-between items-start sm:items-center space-y-4 sm:space-y-0">
-        <h2 className="text-2xl font-bold text-gray-900 dark:text-white">项目管理</h2>
-        <div className="flex flex-wrap items-center gap-3">
-          <button type="button" className="btn-secondary gap-2" onClick={() => { setImportError(''); setImportOpen(true) }}><Plus className="h-4 w-4" />接管项目</button>
-          <button type="button" className="btn-primary gap-2 disabled:opacity-50" disabled={busy || isFetching || fetchingContainers} onClick={() => { refetch(); refreshContainers() }}><RefreshCw className={cn('h-4 w-4', (isFetching || fetchingContainers) && 'animate-spin')} />刷新</button>
-        </div>
-      </div>
+      <PageHeader title="项目管理" className="px-2 sm:px-6" meta={info?.composeRoot && <span className="ml-auto flex min-w-0 items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400" title={info.composeRoot} aria-label={`项目根目录：${info.composeRoot}`}>
+        <FolderOpen aria-hidden="true" className="h-3.5 w-3.5 flex-shrink-0" /><span className="truncate font-mono">{info.composeRoot}</span>
+      </span>}>
+        {!mobileActions && <>
+          <button type="button" aria-label="接管项目" title="接管项目" className="btn-secondary page-action" onClick={openImport}><Plus aria-hidden="true" className="h-4 w-4" /><span className="hidden sm:inline">接管项目</span></button>
+          <button type="button" aria-label="刷新" title="刷新" className="btn-primary page-action disabled:opacity-50" disabled={busy || refreshing} onClick={refreshProjects}><RefreshCw aria-hidden="true" className={cn('h-4 w-4', refreshing && 'animate-spin')} /><span className="hidden sm:inline">刷新</span></button>
+        </>}
+      </PageHeader>
       <div className="px-2 sm:px-6 space-y-4">
         {info && !info.capabilities.compose && <Notice type="warning">当前容器缺少项目管理组件，请升级 DockerCopilot 镜像。</Notice>}
         <Notice>{error?.message}</Notice>
@@ -279,7 +292,7 @@ export function Compose({ onDirty, initialTarget, onOpenContainers }) {
         </>}
       </div>
 
-      <div className="px-2 sm:px-6 py-4">
+      <div className="px-2 sm:px-6 pt-0 pb-3 sm:py-3">
         <div className="grid grid-cols-5 rounded-3xl overflow-hidden shadow-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
           {filters.map((filter, filterIndex) => <button key={filter.id} type="button" aria-pressed={filterStatus === filter.id} onClick={() => setFilterStatus(filter.id)} className={cn(
             'px-0.5 py-3 sm:p-5 text-center transition-all duration-300 group flex flex-col items-center justify-center min-w-0',
@@ -292,13 +305,10 @@ export function Compose({ onDirty, initialTarget, onOpenContainers }) {
         </div>
       </div>
 
-      <div className="px-2 sm:px-6 py-4">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-          <div className="flex items-center gap-2 min-w-0 text-xs text-gray-500 dark:text-gray-400" title="COMPOSE_ROOT">
-            <FolderOpen className="h-4 w-4 flex-shrink-0" /><span className="truncate font-mono" title={info?.composeRoot}>{info?.composeRoot || '…'}</span>
-          </div>
-          {filterStatus !== 'all' && <button type="button" className="text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline" onClick={() => setFilterStatus('all')}>清除筛选</button>}
-        </div>
+      <div className="px-2 sm:px-6 pt-0 pb-4 sm:py-3">
+        {filterStatus !== 'all' && <div className="flex justify-end mb-3">
+          <button type="button" className="text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline" onClick={() => setFilterStatus('all')}>清除筛选</button>
+        </div>}
         {isLoading ? <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4" aria-label="正在加载项目">
           {[1, 2, 3, 4].map(value => <div key={value} className="card rounded-2xl p-4 animate-pulse"><div className="h-16 bg-gray-100 dark:bg-gray-700 rounded-lg" /><div className="h-8 mt-3 bg-gray-100 dark:bg-gray-700 rounded-lg" /></div>)}
         </div> : visibleProjects.length ? <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">

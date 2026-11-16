@@ -7,7 +7,7 @@ import { Icons } from './Icons.jsx'
 import { Notifications } from './Notifications.jsx'
 
 const sections = [
-  { id: 'automation', label: '自动更新', shortLabel: '自动更新', icon: Clock },
+  { id: 'automation', label: '更新设置', shortLabel: '更新设置', icon: Clock },
   { id: 'notifications', label: '消息推送', shortLabel: '通知', icon: Bell },
   { id: 'devices', label: '设备管理', shortLabel: '设备', icon: Network },
   { id: 'icons', label: '图标库', shortLabel: '图标', icon: Box },
@@ -21,7 +21,7 @@ export function Settings({ section, onSectionChange, onDirty, beforeLeave }) {
     // 切换内容会卸载原面板；新面板渲染后把焦点交还分类按钮。
     requestAnimationFrame(() => document.getElementById(`settings-tab-${accepted ? id : section}`)?.focus({ preventScroll: true }))
   }
-  const navigation = <div role="tablist" aria-label="设置分类" className="grid grid-cols-4 sm:flex gap-1 p-1 mb-4 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+  const navigation = <div role="tablist" aria-label="设置分类" className="grid grid-cols-4 sm:flex gap-1 p-1 mb-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
     {sections.map(({ id, label, shortLabel, icon: Icon }, index) => <button
       key={id}
       id={`settings-tab-${id}`}

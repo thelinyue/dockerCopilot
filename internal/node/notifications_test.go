@@ -94,7 +94,7 @@ func TestConcurrentSettingsPatchesPreserveOtherCategory(t *testing.T) {
 	}
 	start := make(chan struct{})
 	var group sync.WaitGroup
-	for _, body := range []string{`{"httpsProxy":"http://proxy.example:7890","excludedContainers":["app"]}`, `{"notifications":{"bark":{"deviceKey":"concurrent-key"},"checkFailed":false}}`} {
+	for _, body := range []string{`{"httpsProxy":"http://proxy.example:7890","excludedContainers":["app"]}`, `{"notifications":{"bark":{"deviceKey":"concurrent-key"},"checkFailed":false}}`, `{"keepOldContainer":true,"githubProxy":"https://mirror.example/prefix"}`} {
 		group.Add(1)
 		go func(body string) {
 			defer group.Done()
@@ -107,7 +107,7 @@ func TestConcurrentSettingsPatchesPreserveOtherCategory(t *testing.T) {
 	close(start)
 	group.Wait()
 	got := s.Get()
-	if got.HTTPSProxy != "http://proxy.example:7890" || len(got.ExcludedContainers) != 1 || got.Notifications.CheckFailed || got.Notifications.Bark.DeviceKey != "concurrent-key" {
+	if got.HTTPSProxy != "http://proxy.example:7890" || len(got.ExcludedContainers) != 1 || got.Notifications.CheckFailed || got.Notifications.Bark.DeviceKey != "concurrent-key" || !got.KeepOldContainer || got.GithubProxy != "https://mirror.example/prefix" {
 		t.Fatal("分类并发保存相互覆盖", got)
 	}
 }

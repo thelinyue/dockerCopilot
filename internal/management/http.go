@@ -133,6 +133,7 @@ func (m *Manager) Routes(server *rest.Server) {
 		s := m.Context.Settings.Get()
 		s.HTTPProxy = node.RedactProxy(s.HTTPProxy)
 		s.HTTPSProxy = node.RedactProxy(s.HTTPSProxy)
+		s.GithubProxy = node.RedactProxy(s.GithubProxy)
 		public := struct {
 			node.Settings
 			Notifications any `json:"notifications"`

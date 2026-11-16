@@ -4,28 +4,31 @@ import { AlertCircle, CheckCircle, Clock, LoaderCircle, RotateCw, X } from 'luci
 import { cn } from '../utils/cn.js'
 import { settingsErrorTarget } from '../utils/settings.js'
 
-export function PageHeader({ title, children }) {
+export function PageHeader({ title, meta, children, className }) {
   return (
-    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6 pt-4 sm:pt-0">
-      <h2 className="text-2xl font-bold text-gray-900 dark:text-white">{title}</h2>
-      {children && <div className="flex flex-wrap items-center gap-2">{children}</div>}
-    </div>
+    <header className={cn('flex items-center justify-between gap-2 sm:gap-3 pt-1 pb-2 sm:py-3', className)}>
+      <div className="flex min-w-0 flex-1 items-center gap-3">
+        <h2 className="flex-shrink-0 text-2xl font-bold whitespace-nowrap text-gray-900 dark:text-white">{title}</h2>
+        {meta}
+      </div>
+      {children && <div role="group" aria-label={`${title}操作`} className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">{children}</div>}
+    </header>
   )
 }
 
 // 四个设置面板共用页头和分类导航，操作仍由各面板持有，避免重复标题和额外留白。
 export function SettingsPanel({ navigation, scope, section, status, actions, children }) {
   return <>
-    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
-      <div className="flex flex-1 items-center justify-between gap-3 min-w-0">
-        <div className="flex items-center gap-3 min-w-0">
-          <h2 className="text-2xl font-bold flex-shrink-0">设置</h2>
-          {scope && <span className="min-w-0 truncate text-xs sm:text-sm text-gray-500 dark:text-gray-400" title={scope}>{scope}</span>}
-        </div>
-        {status && <div className="flex-shrink-0 whitespace-nowrap">{status}</div>}
+    <header className="flex items-center justify-between gap-2 sm:gap-3 min-h-[44px] mb-3">
+      <div className="flex flex-1 items-center gap-2 sm:gap-3 min-w-0">
+        <h2 className="text-2xl font-bold flex-shrink-0">设置</h2>
+        {scope && <span className="min-w-0 truncate text-xs sm:text-sm text-gray-500 dark:text-gray-400" title={scope}>{scope}</span>}
       </div>
-      {actions && <div className="flex flex-wrap items-center gap-2 flex-shrink-0">{actions}</div>}
-    </div>
+      <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
+        {status && <div className="whitespace-nowrap">{status}</div>}
+        {actions && <div role="group" aria-label="设置操作" className="flex items-center gap-1.5 sm:gap-2">{actions}</div>}
+      </div>
+    </header>
     {navigation}
     <div id="settings-panel" role="tabpanel" aria-labelledby={`settings-tab-${section}`}>{children}</div>
   </>

@@ -19,9 +19,10 @@ import { useResourceTasks, containerResource, projectResource } from '../hooks/u
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getImageLogo } from '../config/imageLogos.js'
 import icons8Img from '../assets/icons8.png'
-import { Dialog, Notice, UpdateBadge, useConfirmation } from './ManagementUI.jsx'
+import { Dialog, Notice, PageHeader, UpdateBadge, useConfirmation } from './ManagementUI.jsx'
 import { useIcons } from '../hooks/useIcons.js'
 import { ICON_ACCEPT, normalizeImageRepository } from '../utils/icons.js'
+import { ContainerBatchMenu } from './leibox/glass-tab-menu/ContainerBatchMenu.jsx'
 
 // 格式化运行时间为中文
 function formatRunningTime(runningTime) {
@@ -71,7 +72,7 @@ function formatRunningTime(runningTime) {
   return result.trim()
 }
 
-export function Containers({ scope, onClearScope, onOpenCompose }) {
+export function Containers({ scope, onClearScope, onOpenCompose, mobileBatch, batchRef, onBatchChange }) {
   const { deviceId, containerAPI, progressAPI, managementAPI } = useDeviceAPI()
   const queryClient = useQueryClient()
   const confirm = useConfirmation()
@@ -222,7 +223,7 @@ export function Containers({ scope, onClearScope, onOpenCompose }) {
       const composeContainers = containers.filter(c => selectedContainers.includes(c.id) && c.composeProject)
       const first = composeContainers[0]
       const sameProject = composeContainers.every(c => c.composeProject === first.composeProject && c.composeDirectory === first.composeDirectory)
-      setConfirmModal({ isOpen: true, title: '按项目服务更新', message: '选中的容器包含项目服务，请在项目页面更新，或在自动更新页面按排除规则统一执行。', onConfirm: () => { setConfirmModal({ isOpen: false }); onOpenCompose?.(sameProject ? { ...first, composeService: '' } : null) } })
+      setConfirmModal({ isOpen: true, title: '按项目服务更新', message: '选中的容器包含项目服务，请在项目页面更新，或在更新设置页面按排除规则统一执行。', onConfirm: () => { setConfirmModal({ isOpen: false }); onOpenCompose?.(sameProject ? { ...first, composeService: '' } : null) } })
       return
     }
     const failures = []
@@ -232,7 +233,7 @@ export function Containers({ scope, onClearScope, onOpenCompose }) {
       try {
         if (action === 'update') {
           if (container.status?.toLowerCase() !== 'running') throw new Error('容器已停止，请先启动后再更新')
-          const response = await submitOperation(containerResource(container), 'update', () => containerAPI.updateContainer(containerId, container.name, container.usingImage, true))
+          const response = await submitOperation(containerResource(container), 'update', () => containerAPI.updateContainer(containerId, container.name, container.usingImage))
           const taskID = response.data.data?.taskID
           if (taskID) await pollProgress(containerId, taskID)
         } else {
@@ -297,7 +298,7 @@ export function Containers({ scope, onClearScope, onOpenCompose }) {
       } else {
         if (container.status?.toLowerCase() !== 'running') throw new Error('容器已停止，请先启动后再更新；自动更新会保持其停止状态。')
         submitted = true
-        await submitOperation(containerResource(container), 'update', () => containerAPI.updateContainer(containerId, container.name, container.usingImage, true))
+        await submitOperation(containerResource(container), 'update', () => containerAPI.updateContainer(containerId, container.name, container.usingImage))
       }
       setSelectedContainer(null)
     } catch (error) {
@@ -359,6 +360,18 @@ export function Containers({ scope, onClearScope, onOpenCompose }) {
       setSelectedContainers(visibleContainers.map(container => container.id))
     }
   }
+
+  // 容器页持有所选对象和实际操作；底部组件仅使用摘要及当前回调，切设备时引用自动清空。
+  React.useImperativeHandle(batchRef, () => ({
+    enter: () => setIsBatchMode(true),
+    exit: () => { setIsBatchMode(false); setSelectedContainers([]) },
+    selectAll: toggleSelectAll,
+    action: handleBatchAction,
+  }))
+  React.useLayoutEffect(() => {
+    onBatchChange?.(isLoading ? null : { active: isBatchMode, selectedCount: selectedContainers.length, totalCount: visibleContainers.length })
+  }, [onBatchChange, isLoading, isBatchMode, selectedContainers.length, visibleContainers.length])
+  React.useLayoutEffect(() => () => onBatchChange?.(null), [onBatchChange])
 
   // 获取状态指示器颜色
   const getStatusIndicatorColor = (status) => {
@@ -468,95 +481,17 @@ export function Containers({ scope, onClearScope, onOpenCompose }) {
       )}
 
       {/* 页面标题和操作 */}
-      <div className="px-2 sm:px-6 py-4 flex flex-col sm:flex-row justify-between items-start sm:items-center space-y-4 sm:space-y-0">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-white">容器管理</h2>
-        </div>
-
-        {/* 批量操作按钮区域 */}
-        {!isBatchMode ? (
-          <div className="flex items-center space-x-3">
-            <button
-              className="btn-secondary"
-              onClick={() => setIsBatchMode(true)}
-            >
-              批量操作
-            </button>
-
-            <button
-              className="btn-primary"
-              onClick={() => refetch()}
-            >
-              <RefreshCw className="h-4 w-4 mr-2" />
-              刷新
-            </button>
-          </div>
-        ) : (
-          <div className="flex flex-wrap gap-2 sm:gap-3 w-full sm:w-auto">
-            <button
-              className="btn-secondary px-3 sm:px-4 py-2"
-              onClick={toggleSelectAll}
-              title={selectedContainers.length === visibleContainers.length ? '取消全选' : '全选'}
-            >
-              <span className="hidden sm:inline">
-                {selectedContainers.length === visibleContainers.length ? '取消全选' : '全选'}
-              </span>
-              <span className="sm:hidden text-sm font-semibold">
-                {selectedContainers.length}/{visibleContainers.length}
-              </span>
-            </button>
-            <button
-              className={`btn-primary flex items-center justify-center px-3 sm:px-4 py-2 gap-1 sm:gap-2 ${selectedContainers.length === 0 ? 'opacity-50 cursor-not-allowed' : ''}`}
-              disabled={selectedContainers.length === 0}
-              onClick={() => handleBatchAction('start')}
-              title="启动"
-            >
-              <Play className="h-4 w-4 flex-shrink-0" />
-              <span className="hidden sm:inline">启动</span>
-            </button>
-            <button
-              className={`btn-secondary flex items-center justify-center px-3 sm:px-4 py-2 gap-1 sm:gap-2 ${selectedContainers.length === 0 ? 'opacity-50 cursor-not-allowed' : ''}`}
-              disabled={selectedContainers.length === 0}
-              onClick={() => handleBatchAction('stop')}
-              title="停止"
-            >
-              <Square className="h-4 w-4 flex-shrink-0" />
-              <span className="hidden sm:inline">停止</span>
-            </button>
-            <button
-              className={`btn-secondary flex items-center justify-center px-3 sm:px-4 py-2 gap-1 sm:gap-2 ${selectedContainers.length === 0 ? 'opacity-50 cursor-not-allowed' : ''}`}
-              disabled={selectedContainers.length === 0}
-              onClick={() => handleBatchAction('restart')}
-              title="重启"
-            >
-              <RotateCcw className="h-4 w-4 flex-shrink-0" />
-              <span className="hidden sm:inline">重启</span>
-            </button>
-            <button
-              className={`btn-secondary flex items-center justify-center px-3 sm:px-4 py-2 gap-1 sm:gap-2 ${selectedContainers.length === 0 ? 'opacity-50 cursor-not-allowed' : ''}`}
-              disabled={selectedContainers.length === 0}
-              onClick={() => handleBatchAction('update')}
-              title="更新"
-            >
-              <Upload className="h-4 w-4 flex-shrink-0" />
-              <span className="hidden sm:inline">更新</span>
-            </button>
-            <button
-              className="btn-danger px-3 sm:px-4 py-2"
-              onClick={() => {
-                setSelectedContainers([])
-                setIsBatchMode(false)
-              }}
-            >
-              <span className="hidden sm:inline">取消</span>
-              <span className="sm:hidden">✕</span>
-            </button>
-          </div>
-        )}
-      </div>
+      <PageHeader title="容器管理" className="px-2 sm:px-6">
+        {!mobileBatch && <>
+          <ContainerBatchMenu active={isBatchMode} selectedCount={selectedContainers.length} totalCount={visibleContainers.length}
+            onEnter={() => setIsBatchMode(true)} onExit={() => { setIsBatchMode(false); setSelectedContainers([]) }}
+            onSelectAll={toggleSelectAll} onAction={handleBatchAction} />
+          <button type="button" aria-label="刷新" title="刷新" className="btn-primary page-action" onClick={() => refetch()}><RefreshCw aria-hidden="true" className="h-4 w-4" /><span className="hidden sm:inline">刷新</span></button>
+        </>}
+      </PageHeader>
 
       {/* 统计信息 */}
-      <div className="px-2 sm:px-6 py-4">
+      <div className="px-2 sm:px-6 pt-0 pb-3 sm:py-3">
         <div className="grid grid-cols-4 gap-0 rounded-3xl overflow-hidden shadow-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
           {/* 总容器数 */}
           <button
@@ -629,33 +564,19 @@ export function Containers({ scope, onClearScope, onOpenCompose }) {
       </div>
 
       {/* 容器列表 */}
-      <div className="px-2 sm:px-6 py-4">
-        {(scope || filterStatus || selectedContainers.length > 0) && (
+      <div className="px-2 sm:px-6 pt-0 pb-4 sm:py-3">
+        {(scope || filterStatus) && (
           <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex flex-wrap items-center gap-2 min-w-0">
                 {scope && <button type="button" onClick={() => onOpenCompose?.({ composeProject: scope.projectName, composeDirectory: scope.directory, composeService: scope.serviceName })} className="inline-flex items-center gap-1.5 min-w-0 max-w-full text-sm font-medium text-primary-700 dark:text-primary-300 hover:underline" title="打开项目">
                   <Boxes className="h-4 w-4 flex-shrink-0" /><span className="truncate">{scope.projectName}{scope.serviceName && ` / ${scope.serviceName}`}</span>
                 </button>}
-                <span className="text-sm text-blue-700 dark:text-blue-300">
-                  {filterStatus && (
-                    <>
-                      {filterStatus === 'running' && '运行中容器 '}
-                      {filterStatus === 'stopped' && '已停止容器 '}
-                      {filterStatus === 'update' && '有更新容器 '}
-                    </>
-                  )}
-                  {!filterStatus && selectedContainers.length > 0 && (
-                    <>
-                      已选 {selectedContainers.length} 个
-                    </>
-                  )}
-                  {filterStatus && selectedContainers.length > 0 && (
-                    <>
-                      &nbsp;·&nbsp;已选中 {selectedContainers.length} 个容器
-                    </>
-                  )}
-                </span>
+                {filterStatus && <span className="text-sm text-blue-700 dark:text-blue-300">
+                  {filterStatus === 'running' && '运行中容器 '}
+                  {filterStatus === 'stopped' && '已停止容器 '}
+                  {filterStatus === 'update' && '有更新容器 '}
+                </span>}
                 {(scope || filterStatus) && (
                   <>
                     <button
@@ -681,14 +602,6 @@ export function Containers({ scope, onClearScope, onOpenCompose }) {
                   </>
                 )}
               </div>
-              {selectedContainers.length > 0 && !filterStatus && (
-                <button
-                  onClick={() => setSelectedContainers([])}
-                  className="px-2 py-0.5 text-xs font-medium text-blue-600 dark:text-blue-300 hover:text-blue-800 dark:hover:text-blue-100 bg-blue-100 dark:bg-blue-800/50 rounded transition-colors"
-                >
-                  取消选择
-                </button>
-              )}
             </div>
           </div>
         )}
@@ -710,6 +623,7 @@ export function Containers({ scope, onClearScope, onOpenCompose }) {
                         // 如果启用批量模式，点击选择；否则打开详情
                         if (e.metaKey || e.ctrlKey || isBatchMode) {
                           e.stopPropagation()
+                          setIsBatchMode(true)
                           toggleContainerSelection(container.id)
                         } else {
                           setSelectedContainer(container)
@@ -1063,8 +977,7 @@ function ContainerDetailModal({ container, onClose, onRename, onUpdate, onAction
         const response = await submitOperation(containerResource(container), 'update', () => containerAPI.updateContainer(
           container.id,
           container.name,
-          imageNameAndTag,
-          true // 删除旧容器
+          imageNameAndTag
         ))
 
         console.log('更新容器响应:', response.data)

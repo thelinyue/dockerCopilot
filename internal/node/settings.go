@@ -20,8 +20,10 @@ type Settings struct {
 	UpdateCron         string               `json:"updateCron"`
 	ExcludedContainers []string             `json:"excludedContainers"`
 	ExcludedServices   []string             `json:"excludedServices"`
+	KeepOldContainer   bool                 `json:"keepOldContainer"`
 	HTTPProxy          string               `json:"httpProxy"`
 	HTTPSProxy         string               `json:"httpsProxy"`
+	GithubProxy        string               `json:"githubProxy"`
 	Notifications      NotificationSettings `json:"notifications"`
 }
 
@@ -51,14 +53,17 @@ func DataDir() string {
 func OpenSettings(dir string) (*Store, error) {
 	s := &Store{path: filepath.Join(dir, "settings.json"), settings: Settings{
 		CheckCron: "30 * * * *", StartupCheck: true, UpdateCron: "0 3 * * *",
-		HTTPProxy: os.Getenv("HTTP_PROXY"), HTTPSProxy: os.Getenv("HTTPS_PROXY"),
 		ExcludedContainers: []string{}, ExcludedServices: []string{},
 		Notifications: DefaultNotifications(),
 	}}
 	b, err := os.ReadFile(s.path)
 	missing := os.IsNotExist(err)
+	var fields map[string]json.RawMessage
 	if err == nil {
 		err = json.Unmarshal(b, &s.settings)
+		if err == nil {
+			err = json.Unmarshal(b, &fields)
+		}
 	} else if os.IsNotExist(err) {
 		err = nil
 	}
@@ -69,15 +74,35 @@ func OpenSettings(dir string) (*Store, error) {
 		// 新安装只有一个频率；旧文件缺少字段时仍沿用旧版默认值。
 		s.settings.UpdateCron = s.settings.CheckCron
 	}
+	// 只迁移缺失字段，并立即持久化默认值；显式清空、false 及后续重启均不再受旧环境影响。
+	needsSave := missing
+	for _, field := range []struct {
+		key, env string
+		value    *string
+	}{
+		{"httpProxy", "HTTP_PROXY", &s.settings.HTTPProxy},
+		{"httpsProxy", "HTTPS_PROXY", &s.settings.HTTPSProxy},
+		{"githubProxy", "githubProxy", &s.settings.GithubProxy},
+	} {
+		if _, exists := fields[field.key]; !exists {
+			*field.value = os.Getenv(field.env)
+			needsSave = true
+		}
+	}
+	if _, exists := fields["keepOldContainer"]; !exists {
+		s.settings.KeepOldContainer = os.Getenv("DelOldContainer") == "false"
+		needsSave = true
+	}
+	s.settings.GithubProxy = strings.TrimRight(strings.TrimSpace(s.settings.GithubProxy), "/")
 	if s.settings.Notifications == (NotificationSettings{}) {
 		s.settings.Notifications = DefaultNotifications()
 	}
 	if err = Validate(s.settings); err != nil {
 		return nil, err
 	}
-	if missing {
+	if needsSave {
 		if err := WriteJSON(s.path, s.settings); err != nil {
-			return nil, fmt.Errorf("初始化节点设置失败，请检查数据目录权限: %w", err)
+			return nil, fmt.Errorf("初始化或迁移节点设置失败，请检查数据目录权限和剩余空间: %w", err)
 		}
 	}
 	return s, nil
@@ -99,6 +124,17 @@ func Validate(s Settings) error {
 		u, err := url.Parse(value)
 		if err != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https" && u.Scheme != "socks5" && u.Scheme != "socks5h") || u.RawQuery != "" || u.Fragment != "" {
 			return fmt.Errorf("代理地址无效，请使用 http://主机:端口、https://主机:端口或 socks5://主机:端口")
+		}
+	}
+	if s.GithubProxy != "" {
+		u, err := url.Parse(s.GithubProxy)
+		if err != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") || u.RawQuery != "" || u.Fragment != "" {
+			return fmt.Errorf("GitHub 加速地址无效，请填写 http(s)://主机:端口，可包含路径前缀，不含查询参数或片段")
+		}
+		if u.User != nil {
+			if credential, _ := u.User.Password(); credential == "********" {
+				return fmt.Errorf("GitHub 加速地址包含密码掩码，修改时请重新填写完整地址和密码")
+			}
 		}
 	}
 	return s.Notifications.Validate()
@@ -136,7 +172,7 @@ func (s *Store) Patch(data json.RawMessage) error {
 	for _, pair := range []struct {
 		value    *string
 		previous string
-	}{{&v.HTTPProxy, s.settings.HTTPProxy}, {&v.HTTPSProxy, s.settings.HTTPSProxy}} {
+	}{{&v.HTTPProxy, s.settings.HTTPProxy}, {&v.HTTPSProxy, s.settings.HTTPSProxy}, {&v.GithubProxy, s.settings.GithubProxy}} {
 		if *pair.value == RedactProxy(pair.previous) {
 			*pair.value = pair.previous
 		}
@@ -149,6 +185,7 @@ func (s *Store) Patch(data json.RawMessage) error {
 }
 
 func (s *Store) saveLocked(v Settings) error {
+	v.GithubProxy = strings.TrimRight(strings.TrimSpace(v.GithubProxy), "/")
 	v.Notifications.Bark.ServerURL = strings.TrimRight(strings.TrimSpace(v.Notifications.Bark.ServerURL), "/")
 	v.Notifications.Bark.DeviceKey = strings.TrimSpace(v.Notifications.Bark.DeviceKey)
 	if err := Validate(v); err != nil {

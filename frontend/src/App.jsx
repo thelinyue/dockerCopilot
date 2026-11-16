@@ -31,11 +31,15 @@ function AppContent() {
   const leaving = useRef(false)
   const [activeTab, setActiveTab] = useState('#compose')
   const [settingsSection, setSettingsSection] = useState('automation')
-  const dirtyName = activeTab === '#settings' ? (settingsSection === 'notifications' ? '消息推送设置' : '自动更新设置') : '项目文件'
+  const dirtyName = activeTab === '#settings' ? (settingsSection === 'notifications' ? '消息推送设置' : '更新设置') : '项目文件'
   const [containerScope, setContainerScope] = useState(null)
   const [composeTarget, setComposeTarget] = useState(null)
   const [windowWidth, setWindowWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1024)
   const [userPreferredCollapsed, setUserPreferredCollapsed] = useState(false)
+  const containerBatchRef = useRef(null)
+  const [containerBatch, setContainerBatch] = useState(null)
+  const pageActionsRef = useRef(null)
+  const [pageActions, setPageActions] = useState(null)
 
   useEffect(() => {
     if (!isAuthenticated) queryClient.removeQueries({ predicate: query => ['iconBlob', 'customIcons'].includes(query.queryKey[1]) })
@@ -213,15 +217,18 @@ function AppContent() {
   const renderContent = () => {
     switch (activeTab) {
       case '#containers':
-        return <Containers scope={containerScope} onClearScope={() => setContainerScope(null)} onOpenCompose={openCompose} />
+        return <Containers scope={containerScope} onClearScope={() => setContainerScope(null)} onOpenCompose={openCompose}
+          mobileBatch={windowWidth < 768} batchRef={containerBatchRef} onBatchChange={setContainerBatch} />
       case '#images':
-        return <Images />
+        return <Images mobileActions={windowWidth < 768} actionsRef={pageActionsRef} onActionsChange={setPageActions} />
       case '#compose':
-        return <Compose onDirty={setDirty} initialTarget={composeTarget} onOpenContainers={openContainers} />
+        return <Compose onDirty={setDirty} initialTarget={composeTarget} onOpenContainers={openContainers}
+          mobileActions={windowWidth < 768} actionsRef={pageActionsRef} onActionsChange={setPageActions} />
       case '#settings':
         return <Settings section={settingsSection} onSectionChange={handleSettingsSectionChange} onDirty={setDirty} beforeLeave={settingsBeforeLeave} />
       default:
-        return <Compose onDirty={setDirty} initialTarget={composeTarget} onOpenContainers={openContainers} />
+        return <Compose onDirty={setDirty} initialTarget={composeTarget} onOpenContainers={openContainers}
+          mobileActions={windowWidth < 768} actionsRef={pageActionsRef} onActionsChange={setPageActions} />
     }
   }
 
@@ -256,14 +263,26 @@ function AppContent() {
               ? 'ml-20'
               : 'ml-64'
       )}>
-        <div className="flex-1 p-2 sm:p-4 lg:p-4 pt-4 sm:pt-4">
+        <div className="flex-1 p-2 sm:p-4 lg:p-4 pt-2 sm:pt-4">
           {renderContent()}
         </div>
       </main>
       <MobileBottomNav
+        key={`mobile-navigation-${deviceId}`}
         activeTab={activeTab}
         onTabChange={handleTabChange}
         windowWidth={windowWidth}
+        batch={activeTab === '#containers' && containerBatch ? {
+          ...containerBatch,
+          onEnter: () => containerBatchRef.current?.enter(),
+          onExit: () => containerBatchRef.current?.exit(),
+          onSelectAll: () => containerBatchRef.current?.selectAll(),
+          onAction: action => containerBatchRef.current?.action(action),
+        } : null}
+        actions={pageActions?.page === activeTab ? {
+          ...pageActions,
+          onAction: id => pageActionsRef.current?.[id]?.(),
+        } : null}
       />
     </div>
     </DeviceProvider>
