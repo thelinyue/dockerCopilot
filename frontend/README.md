@@ -23,4 +23,6 @@ go test ./...
 
 `src/api/client.js` 定义 API 客户端，`src/components/` 存放业务组件。`front/` 和 `frontend/dist/` 都是构建产物，不提交到 Git。前端构建后由 Go 嵌入，部署沿用根目录的统一后端镜像流程，不再单独构建前端镜像或跨仓库触发发布。
 
+应用图标原稿、各用途尺寸和生成提示词见 [图标说明](../docs/BRANDING.md)。
+
 源码来源为 [DongShull/Docker-Copilot-React](https://github.com/DongShull/Docker-Copilot-React)，导入提交为 `263766c39566a356d916fc2167945cfb8aaffd38`。原始历史仍可在上游及个人前端 fork 中查阅。上游 README 标注 MIT，但该快照未提供独立 LICENSE 文件；此处保留来源信息，仓库根目录的 LICENSE 保持原样。

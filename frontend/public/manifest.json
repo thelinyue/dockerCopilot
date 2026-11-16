@@ -1,7 +1,7 @@
 {
   "name": "Docker Copilot",
-  "short_name": "Docker",
-  "description": "一个简洁、优雅且强大的 Docker 容器管理工具",
+  "short_name": "Docker Copilot",
+  "description": "Docker 容器、项目与多设备管理",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
@@ -10,7 +10,7 @@
   "orientation": "portrait-primary",
   "icons": [
     {
-      "src": "/logo.png",
+      "src": "/logo-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
@@ -22,8 +22,8 @@
       "purpose": "any"
     },
     {
-      "src": "/logo.png",
-      "sizes": "192x192",
+      "src": "/logo-maskable.png",
+      "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
     }

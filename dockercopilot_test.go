@@ -32,6 +32,7 @@ func TestPWARootAssets(t *testing.T) {
 
 	for _, asset := range []struct{ path, contentType string }{
 		{"/manifest.json", "json"}, {"/sw.js", "javascript"}, {"/logo.png", "image/png"}, {"/index.html", "text/html"},
+		{"/logo-192.png", "image/png"}, {"/logo-maskable.png", "image/png"}, {"/favicon.png", "image/png"}, {"/apple-touch-icon.png", "image/png"},
 	} {
 		t.Run(asset.path, func(t *testing.T) {
 			response, err := fixture.Client().Get(fixture.URL + asset.path)

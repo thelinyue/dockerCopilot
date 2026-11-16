@@ -1,8 +1,12 @@
-const CACHE_NAME = 'docker-copilot-v2';
+const CACHE_NAME = 'docker-copilot-v3';
 const urlsToCache = [
   '/',
   '/index.html',
   '/logo.png',
+  '/logo-192.png',
+  '/logo-maskable.png',
+  '/favicon.png',
+  '/apple-touch-icon.png',
   '/manifest.json'
 ];
 

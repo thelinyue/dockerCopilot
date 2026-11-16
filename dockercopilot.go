@@ -102,7 +102,10 @@ func RegisterHandlers(engine *rest.Server) {
 
 	assetsHandler := http.FileServer(http.FS(frontFS))
 	// 清单与 Service Worker 按根路径引用；显式提供公开静态资源，确保安装及预缓存可用。
-	for _, path := range []string{"/manifest.json", "/sw.js", "/logo.png", "/index.html"} {
+	for _, path := range []string{
+		"/manifest.json", "/sw.js", "/logo.png", "/index.html",
+		"/logo-192.png", "/logo-maskable.png", "/favicon.png", "/apple-touch-icon.png",
+	} {
 		engine.AddRoute(rest.Route{Method: http.MethodGet, Path: path, Handler: assetsHandler.ServeHTTP})
 	}
 
