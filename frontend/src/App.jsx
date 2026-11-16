@@ -41,7 +41,7 @@ function AppContent() {
   // 智能计算侧边栏是否应该收缩
   const getSmartCollapsedState = (width, userPreference) => {
     if (width < 768) {
-      // 手机模式：不在乎收缩状态，菜单模式处理
+      // 手机使用顶栏和底部导航，不渲染侧栏。
       return false
     } else if (width < 1024) {
       // 平板模式：强制收缩，忽略用户偏好
@@ -172,13 +172,22 @@ function AppContent() {
   }
 
   const handleDeviceChange = async (id) => {
-    if (id === deviceId) return
-    if (dirty && !await confirm({ title: '切换设备', message: `${activeTab === '#settings' ? '自动更新设置' : '项目文件'}有未保存的修改，切换后将丢失。`, confirmText: '放弃修改' })) return
+    if (id === deviceId) return true
+    if (dirty && !await confirm({ title: '切换设备', message: `${activeTab === '#settings' ? '自动更新设置' : '项目文件'}有未保存的修改，切换后将丢失。`, confirmText: '放弃修改' })) return false
     setDirty(false)
     setContainerScope(null)
     setComposeTarget(null)
     setDeviceId(id)
     localStorage.setItem('docker_copilot_device', id)
+    return true
+  }
+
+  const handleManageDevices = async () => {
+    // 分别沿用页面和设置分类的离开确认，避免一次跳转重复询问。
+    if (activeTab === '#settings') return handleSettingsSectionChange('devices')
+    if (!await handleTabChange('#settings')) return false
+    setSettingsSection('devices')
+    return true
   }
 
   const handleToggleCollapse = () => {
@@ -208,7 +217,7 @@ function AppContent() {
   }
 
   return (
-    <DeviceProvider key={deviceId} deviceId={deviceId}>
+    <DeviceProvider deviceId={deviceId}>
     <div className="app-shell flex bg-gray-50 dark:bg-gray-900 transition-colors duration-300 flex-col lg:flex-row">
       <Sidebar
         activeTab={activeTab}
@@ -219,8 +228,10 @@ function AppContent() {
         windowWidth={windowWidth}
         deviceId={deviceId}
         onDeviceChange={handleDeviceChange}
+        onManageDevices={handleManageDevices}
       />
-      <main className={cn(
+      {/* 仅重建设备内容，导航保留以便关闭面板后恢复入口焦点。 */}
+      <main key={deviceId} className={cn(
         "flex-1 min-w-0 flex flex-col transition-all duration-300",
         "overflow-y-auto",
         "min-h-0",

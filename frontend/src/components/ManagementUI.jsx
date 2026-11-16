@@ -1,4 +1,5 @@
-import React, { createContext, useCallback, useContext, useEffect, useId, useRef, useState } from 'react'
+import React, { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { AlertCircle, CheckCircle, X } from 'lucide-react'
 import { cn } from '../utils/cn.js'
 
@@ -57,16 +58,79 @@ export function Notice({ children, type = 'error', onClose }) {
 }
 
 // 新增管理操作沿用原有页内弹窗；键盘焦点留在弹窗中，关闭后回到触发位置。
-export function Dialog({ title, onClose, children, className }) {
+export function Dialog({ title, onClose, children, className, id, open = true, onExited, placement = 'center', anchorRef, anchorSide = 'bottom' }) {
   const titleId = useId()
+  const viewport = useRef(null)
   const panel = useRef(null)
   const close = useRef(onClose)
+  const exited = useRef(onExited)
+  const [present, setPresent] = useState(open)
+  const [anchorStyle, setAnchorStyle] = useState({})
+  const navigation = placement !== 'center'
   close.current = onClose
-  useEffect(() => {
+  exited.current = onExited
+
+  // 导航面板先完成退场并交还焦点，再进入切设备、离开确认等后续流程。
+  useLayoutEffect(() => {
+    if (open) {
+      setPresent(true)
+      return
+    }
+    if (!present) return
+    const timer = setTimeout(() => {
+      setPresent(false)
+      exited.current?.()
+    }, navigation && !window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 200 : 0)
+    return () => clearTimeout(timer)
+  }, [open, present, navigation])
+
+  useLayoutEffect(() => {
+    if (!present || placement !== 'anchored') return
+    const update = () => {
+      const anchor = anchorRef?.current?.getBoundingClientRect()
+      if (!anchor || !panel.current || !viewport.current) return
+      const bounds = viewport.current.getBoundingClientRect()
+      const padding = getComputedStyle(viewport.current)
+      const leftEdge = bounds.left + parseFloat(padding.paddingLeft)
+      const topEdge = bounds.top + parseFloat(padding.paddingTop)
+      const rightEdge = bounds.right - parseFloat(padding.paddingRight)
+      const bottomEdge = bounds.bottom - parseFloat(padding.paddingBottom)
+      const width = Math.min(304, rightEdge - leftEdge)
+      const height = Math.min(panel.current.getBoundingClientRect().height, bottomEdge - topEdge)
+      let left = anchorSide === 'right' ? anchor.right + 8 : anchor.left
+      let top = anchorSide === 'right' ? anchor.top : anchor.bottom + 8
+      if (anchorSide === 'right' && left + width > rightEdge) left = anchor.left - width - 8
+      if (anchorSide === 'bottom' && top + height > bottomEdge) top = anchor.top - height - 8
+      setAnchorStyle({
+        width,
+        maxHeight: bottomEdge - topEdge,
+        left: Math.max(leftEdge, Math.min(left, rightEdge - width)) - bounds.left,
+        top: Math.max(topEdge, Math.min(top, bottomEdge - height)) - bounds.top,
+      })
+    }
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(panel.current)
+    window.addEventListener('resize', update)
+    window.addEventListener('scroll', update, true)
+    window.visualViewport?.addEventListener('resize', update)
+    window.visualViewport?.addEventListener('scroll', update)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', update)
+      window.removeEventListener('scroll', update, true)
+      window.visualViewport?.removeEventListener('resize', update)
+      window.visualViewport?.removeEventListener('scroll', update)
+    }
+  }, [present, placement, anchorRef, anchorSide])
+
+  // 在绘制前记录入口并接管焦点，避免快速按 Tab 时把背景按钮误记为返回位置。
+  useLayoutEffect(() => {
+    if (!present) return
     const previous = document.activeElement
     const overflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
-    const focusable = () => Array.from(panel.current.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [tabindex="0"]'))
+    const focusable = () => Array.from(panel.current.querySelectorAll('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [tabindex="0"]')).filter(item => item.getClientRects().length)
     const initial = panel.current.querySelector('[data-autofocus]') || focusable()[0]
     initial?.focus()
     const handleKey = event => {
@@ -93,18 +157,21 @@ export function Dialog({ title, onClose, children, className }) {
       document.removeEventListener('keydown', handleKey)
       if (previous?.isConnected) previous.focus()
     }
-  }, [])
-  return (
-    <div className="modal-viewport bg-black bg-opacity-50 z-[60]" onClick={event => { if (event.target === event.currentTarget) onClose?.() }}>
-      <section ref={panel} role="dialog" aria-modal="true" aria-labelledby={titleId} className={cn('modal-panel bg-white dark:bg-gray-800 rounded-2xl shadow-xl max-w-lg w-full text-gray-900 dark:text-gray-100', className)}>
-        <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center gap-3">
+  }, [present])
+  if (!present) return null
+  const content = (
+    <div ref={viewport} data-closing={!open || undefined} className={cn('modal-viewport z-[60]', navigation ? 'navigation-dialog' : 'bg-black bg-opacity-50', placement === 'sheet' && 'dialog-sheet', placement === 'anchored' && 'dialog-anchored')} onClick={event => { if (open && event.target === event.currentTarget) onClose?.() }}>
+      <section id={id} ref={panel} inert={!open ? '' : undefined} role="dialog" aria-modal="true" aria-labelledby={titleId} style={placement === 'anchored' ? anchorStyle : undefined} className={cn('modal-panel bg-white dark:bg-gray-800 rounded-2xl shadow-xl max-w-lg w-full text-gray-900 dark:text-gray-100', className)}>
+        <div className={cn('border-b border-gray-200 dark:border-gray-700 flex justify-between items-center gap-3 flex-shrink-0', navigation ? 'px-4 py-2' : 'px-6 py-4')}>
           <h3 id={titleId} className="min-w-0 break-words text-lg font-medium text-gray-900 dark:text-white">{title}</h3>
-          <button type="button" onClick={onClose} disabled={!onClose} aria-label="关闭对话框" className="flex-shrink-0 text-gray-400 hover:text-gray-500 dark:hover:text-gray-300 disabled:opacity-50"><X className="h-5 w-5" /></button>
+          <button type="button" onClick={onClose} disabled={!onClose} aria-label="关闭对话框" className={cn('flex-shrink-0 text-gray-400 hover:text-gray-500 dark:hover:text-gray-300 disabled:opacity-50', navigation && 'btn-icon-secondary flex items-center justify-center min-h-[44px] min-w-[44px]')}><X className="h-5 w-5" /></button>
         </div>
         {children}
       </section>
     </div>
   )
+  // 侧栏的 transform 会改变 fixed 的定位容器；导航弹层挂到 body，避免裁切与偏移。
+  return navigation ? createPortal(content, document.body) : content
 }
 
 const ConfirmationContext = createContext(null)

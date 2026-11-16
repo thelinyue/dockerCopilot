@@ -10,6 +10,7 @@
     --safe-area-left: env(safe-area-inset-left, 0px);
     --safe-area-right: env(safe-area-inset-right, 0px);
     --mobile-header-height: calc(3.5rem + var(--safe-area-top));
+    --mobile-bottom-nav-height: 4rem;
   }
 
   body {
@@ -40,7 +41,11 @@
   }
 
   .mobile-main {
-    padding-bottom: calc(6.5rem + var(--safe-area-bottom));
+    padding-bottom: calc(var(--mobile-bottom-nav-height) + 1.25rem + var(--safe-area-bottom));
+  }
+
+  .mobile-bottom-nav {
+    height: var(--mobile-bottom-nav-height);
   }
 
   /* 弹窗跟随实际可视区域，避免 PWA 刘海、底部手势区和软键盘遮挡操作。 */
@@ -54,6 +59,49 @@
   .modal-panel {
     @apply max-h-full overflow-y-auto;
     overscroll-behavior: contain;
+  }
+
+  /* 导航弹层共享原有 Dialog 的焦点和滚动管理，仅改变定位与进退场。 */
+  .navigation-dialog {
+    @apply bg-black/40;
+    animation: navigation-backdrop-in 200ms ease-out both;
+  }
+
+  .navigation-dialog .modal-panel {
+    @apply flex flex-col overflow-hidden;
+    animation: navigation-panel-in 200ms ease-out both;
+  }
+
+  .dialog-sheet {
+    align-items: flex-end;
+    padding: max(1rem, var(--safe-area-top)) var(--safe-area-right) 0 var(--safe-area-left);
+  }
+
+  .dialog-sheet .modal-panel {
+    max-width: none;
+    max-height: 70%;
+    border-radius: 1.5rem 1.5rem 0 0;
+    padding-bottom: max(0.5rem, var(--safe-area-bottom));
+    --navigation-panel-offset: 1.5rem;
+  }
+
+  .dialog-anchored {
+    @apply bg-black/10 dark:bg-black/30;
+  }
+
+  .dialog-anchored .modal-panel {
+    position: absolute;
+    width: 19rem;
+    max-width: calc(100% - 2rem);
+    --navigation-panel-offset: 0.375rem;
+  }
+
+  .navigation-dialog[data-closing] {
+    animation: navigation-backdrop-out 200ms ease-in both;
+  }
+
+  .navigation-dialog[data-closing] .modal-panel {
+    animation: navigation-panel-out 200ms ease-in both;
   }
 
   .auth-screen {
@@ -131,6 +179,36 @@
 }
 
 @layer utilities {
+  @keyframes navigation-backdrop-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  @keyframes navigation-backdrop-out {
+    from { opacity: 1; }
+    to { opacity: 0; }
+  }
+
+  @keyframes navigation-panel-in {
+    from { opacity: 0; transform: translateY(var(--navigation-panel-offset)); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes navigation-panel-out {
+    from { opacity: 1; transform: translateY(0); }
+    to { opacity: 0; transform: translateY(var(--navigation-panel-offset)); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .navigation-dialog, .navigation-dialog .modal-panel {
+      animation: none;
+    }
+
+    .mobile-header *, .mobile-bottom-nav, .mobile-bottom-nav * {
+      transition-duration: 0ms;
+    }
+  }
+
   .card-actions > button {
     min-width: 0;
     gap: 0.125rem;
