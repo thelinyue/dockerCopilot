@@ -193,12 +193,12 @@ export function Sidebar({ activeTab, onTabChange, onLogout, isCollapsed = false,
             <div className="h-px bg-gradient-to-r from-transparent via-gray-200 dark:via-gray-700 to-transparent" />
           </div>
 
-          <div className={cn('pt-3', isCollapsed ? 'px-2.5' : 'px-3 sm:px-4')}>
+          <div className={cn('pt-2', isCollapsed ? 'px-2.5' : 'px-3 sm:px-4')}>
             <DeviceSelector deviceId={deviceId} onChange={onDeviceChange} onManageDevices={onManageDevices} compact={isCollapsed} />
           </div>
 
           {/* 导航菜单 */}
-          <nav aria-label="主导航" className={cn("flex-1 py-4 space-y-2", isCollapsed ? "px-2.5" : "px-3 sm:px-4")}>
+          <nav aria-label="主导航" className={cn("flex-1 pt-2 pb-4 space-y-2", isCollapsed ? "px-2.5" : "px-3 sm:px-4")}>
             <ul className="space-y-0.5">
               {navItems.map((item) => {
                 const Icon = item.icon
