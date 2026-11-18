@@ -48,6 +48,15 @@ function parseVersion(version) {
   }
 }
 
+function versionCheckError(error) {
+  if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') return '检查更新超时，请检查网络或代理设置。'
+  const message = error.response?.data?.msg || error.message || ''
+  const chineseMessage = /[\u4e00-\u9fff]/.test(message)
+  const status = error.response?.status
+  if (status >= 400) return `${chineseMessage ? message : '更新服务暂时不可用'}（HTTP ${status}）`
+  return chineseMessage ? message : '无法检查更新，请检查网络或代理设置。'
+}
+
 /**
  * 版本检查 Hook
  * 用于检查后端版本，并提示用户是否有更新
@@ -56,9 +65,10 @@ export function useVersionCheck() {
   const { deviceId, versionAPI, progressAPI } = useDeviceAPI()
   const [showUpdatePrompt, setShowUpdatePrompt] = useState(false)
   const [isUpdating, setIsUpdating] = useState(false)
+  const [updateError, setUpdateError] = useState('')
 
   // 查询后端版本信息
-  const { data: versionData, refetch } = useQuery({
+  const { data: versionData, refetch, isFetching: isChecking } = useQuery({
     queryKey: [deviceId, 'version'],
     queryFn: async () => {
       try {
@@ -94,8 +104,8 @@ export function useVersionCheck() {
             }
           }
         } catch (error) {
-          versionError = error.message
-          console.warn('获取远端版本信息失败:', error)
+          versionError = versionCheckError(error)
+          console.warn('获取远端版本信息失败:', versionError)
         }
         
         return {
@@ -106,12 +116,13 @@ export function useVersionCheck() {
           hasBackendUpdate: shouldUpdate(backendVersion, remoteVersion)
         }
       } catch (error) {
-        console.error('获取版本信息失败:', error)
+        const versionError = versionCheckError(error)
+        console.error('获取版本信息失败:', versionError)
         return {
           backendVersion: 'unknown',
           remoteVersion: 'unknown',
           buildDate: '',
-          versionError: error.message,
+          versionError,
           hasBackendUpdate: false
         }
       }
@@ -124,6 +135,7 @@ export function useVersionCheck() {
   // 后端先返回任务，下载、校验和重启在固定设备执行。
   const updateBackend = useCallback(async () => {
     setIsUpdating(true)
+    setUpdateError('')
     try {
       const response = await versionAPI.updateProgram()
       const id = response.data.data.taskID
@@ -144,7 +156,7 @@ export function useVersionCheck() {
         else refetch()
       }, 12000)
     } catch (error) {
-      alert(error.response?.data?.msg || error.message)
+      setUpdateError(error.response?.data?.msg || error.message)
     } finally {
       setIsUpdating(false)
     }
@@ -159,6 +171,8 @@ export function useVersionCheck() {
     // 状态
     showUpdatePrompt,
     isUpdating,
+    isChecking,
+    updateError,
     
     // 版本数据
     backendVersion: versionData?.backendVersion,

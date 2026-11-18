@@ -26,7 +26,7 @@ function TaskDetails({ task }) {
 export function TaskHistoryDialog({ onClose }) {
   const { deviceId, managementAPI } = useDeviceAPI()
   const { data: tasks = [], error, isLoading, isFetching, refetch } = useQuery({ queryKey: [deviceId, 'tasks'], queryFn: managementAPI.tasks, refetchInterval: 3000 })
-  return <Dialog title="执行记录" className="max-w-2xl" onClose={onClose}>
+  return <Dialog mobileFullScreen title="执行记录" className="max-w-2xl" onClose={onClose}>
     <div className="flex items-center justify-between gap-3 px-4 sm:px-6 py-3">
       <span className="text-xs text-gray-500 dark:text-gray-400">{tasks.length} 条记录</span>
       <button type="button" className="btn-icon-secondary disabled:opacity-50" disabled={isFetching} onClick={() => refetch()} aria-label="刷新执行记录" title="刷新"><RefreshCw className={cn('h-4 w-4', isFetching && 'animate-spin')} /></button>

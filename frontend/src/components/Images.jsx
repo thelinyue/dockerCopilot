@@ -1,619 +1,101 @@
+import React, { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { HardDrive, Trash2, RefreshCw, ExternalLink, BrushCleaning } from 'lucide-react'
 import { DeviceImage } from './DeviceImage.jsx'
-import React, { useState, useEffect } from 'react'
-import { HardDrive, Trash2, RefreshCw, Link, BrushCleaning, X, AlertCircle, CheckCircle } from 'lucide-react'
 import { useDeviceAPI } from '../hooks/useDevice.jsx'
-import { cn } from '../utils/cn.js'
+import { useViewState, useWorkspace } from '../hooks/useWorkspace.jsx'
 import { getImageLogo } from '../config/imageLogos.js'
 import { useIcons } from '../hooks/useIcons.js'
-import { Notice, PageHeader } from './ManagementUI.jsx'
+import { ActionMenu, ConnectionNotice, Dialog, Notice, PageHeader, ResourceFilters, Toast, useConfirmation } from './ManagementUI.jsx'
 
-// 安全的图片组件
-function SafeImage({ src, alt, className, fallback }) {
-  const [hasError, setHasError] = React.useState(false)
-  React.useEffect(() => setHasError(false), [src])
+const isDangling = image => image.tag === 'None' || image.tag === '<none>'
+const imageName = image => `${image.name}:${image.tag}`
 
-  if (hasError || !src) {
-    return fallback
-  }
-
-  return (
-    <DeviceImage
-      src={src}
-      alt={alt}
-      className={className}
-      onError={() => setHasError(true)}
-    />
-  )
-}
-
-export function Images({ mobileActions, actionsRef, onActionsChange }) {
-  const { imageAPI } = useDeviceAPI()
-  const [images, setImages] = useState([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState(null)
-  const [success, setSuccess] = useState(null)
-  const [deleteModal, setDeleteModal] = useState({ isOpen: false, image: null })
-  const [filterStatus, setFilterStatus] = useState(null) // null 表示显示全部
-  const [pruneModal, setPruneModal] = useState({ isOpen: false, type: null, images: [] })
-  const [successModal, setSuccessModal] = useState({ isOpen: false, message: '' })
-
-  // 获取自定义图标配置
-  const iconQuery = useIcons()
-  const customIcons = iconQuery.icons
-
-  const fetchImages = async (options = {}) => {
+export function Images() {
+  const { deviceId, imageAPI } = useDeviceAPI()
+  const workspace = useWorkspace()
+  const confirm = useConfirmation()
+  const query = useQuery({ queryKey: [deviceId, 'images'], queryFn: async () => (await imageAPI.getImages()).data.data || [] })
+  const images = query.data || []
+  const icons = useIcons()
+  const [filter, setFilter] = useViewState('images:filter', null)
+  const [selected, setSelected] = useState(null)
+  const [prune, setPrune] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [failure, setFailure] = useState('')
+  const [message, setMessage] = useState('')
+  const candidates = type => images.filter(image => !image.inUsed && (type === 'unused' || isDangling(image)))
+  const disabled = busy || query.isPending || !!query.error || workspace?.online === false
+  const remove = async (image, force = false) => {
+    if (!await confirm({ title: force ? '强制删除镜像' : '删除镜像', message: `设备：${workspace?.deviceLabel || deviceId}\n${imageName(image)}\n${force ? '该镜像正在使用，强制删除可能影响后续容器创建与恢复。' : '删除后，需要重新拉取才能再次创建容器。'}`, confirmText: '删除', danger: true })) return
+    setBusy(true)
+    setFailure('')
     try {
-      setIsLoading(true)
-      if (!options.preserveError) setError(null)
-
-      const response = await imageAPI.getImages()
-
-      if (response.data && (response.data.code === 0 || response.data.code === 200)) {
-        setImages(response.data.data || [])
-      } else {
-        const errorMsg = response.data?.msg || '获取镜像列表失败'
-        setError(errorMsg)
-        setImages([])
-      }
-    } catch (error) {
-      const errorMsg = error.response?.data?.msg || error.message || '网络错误，请检查后端服务'
-      setError(previous => options.preserveError && previous ? `${previous}；刷新列表失败：${errorMsg}` : errorMsg)
-      setImages([])
-    } finally {
-      setIsLoading(false)
-    }
+      await imageAPI.deleteImage(image.id, force)
+      setSelected(null)
+      setMessage('镜像已删除')
+    } catch (error) { setFailure(error.message) }
+    finally { await query.refetch(); setBusy(false) }
   }
-
-  useEffect(() => {
-    fetchImages()
-  }, [])
-
-  const handleDeleteImage = async (imageId, force = false) => {
+  const clean = async () => {
+    const type = prune
+    setPrune(null)
+    setBusy(true)
+    setFailure('')
     try {
-      setIsLoading(true)
-      setDeleteModal({ isOpen: false, image: null })
-
-      await imageAPI.deleteImage(imageId, force)
-
-      setSuccessModal({ isOpen: true, message: '镜像删除成功' })
-      fetchImages()
-      setTimeout(() => setSuccessModal({ isOpen: false, message: '' }), 3000)
-    } catch (error) {
-      const errorMsg = error.response?.data?.msg || error.message || '删除镜像失败'
-      setError(errorMsg)
-      setIsLoading(false)
-    }
-  }
-
-  const handlePrune = async (type) => {
-    try {
-      setIsLoading(true)
-      setError(null)
       const response = await imageAPI.pruneImages(type)
-      const { changed, spaceReclaimed } = response.data.data
+      const { changed, spaceReclaimed = 0 } = response.data.data
       const units = ['B', 'KB', 'MB', 'GB', 'TB']
-      const unit = spaceReclaimed > 0 ? Math.min(Math.floor(Math.log(spaceReclaimed) / Math.log(1024)), units.length - 1) : 0
-      const reclaimed = `${(spaceReclaimed / 1024 ** unit).toFixed(unit ? 1 : 0)} ${units[unit]}`
-      const message = changed ? `镜像清理完成，释放 ${reclaimed}` : '没有可清理的镜像'
-
-      setSuccessModal({ isOpen: true, message })
-      setTimeout(() => setSuccessModal({ isOpen: false, message: '' }), 3000)
-    } catch (error) {
-      const errorMsg = error.response?.data?.msg || error.message || '清理镜像失败'
-      setError(errorMsg)
-    } finally {
-      // 清理出错或超时也可能已回收部分镜像，刷新实际状态并保留错误提示。
-      await fetchImages({ preserveError: true })
+      const unit = spaceReclaimed > 0 ? Math.min(Math.floor(Math.log(spaceReclaimed) / Math.log(1024)), 4) : 0
+      setMessage(changed ? `清理完成，释放 ${(spaceReclaimed / 1024 ** unit).toFixed(unit ? 1 : 0)} ${units[unit]}` : '没有可清理的镜像')
+    } catch (error) { setFailure(error.message) }
+    finally {
+      // 超时可能已经回收部分镜像；重新读取实际状态，保留操作错误及上次列表。
+      await query.refetch()
+      setBusy(false)
     }
   }
-
-  const pruneCandidates = type => images.filter(img => !img.inUsed && (type === 'unused' || img.tag === 'None' || img.tag === '<none>'))
-  const danglingCount = pruneCandidates('dangling').length
-  const unusedCount = pruneCandidates('unused').length
-  const openPrune = type => setPruneModal({ isOpen: true, type, images: pruneCandidates(type) })
-  // 与页头共用确认入口；底部菜单只打开预览，不直接执行清理。
-  React.useImperativeHandle(actionsRef, () => ({
-    dangling: () => openPrune('dangling'),
-    unused: () => openPrune('unused'),
-    refresh: () => fetchImages(),
-  }))
-  React.useLayoutEffect(() => {
-    onActionsChange?.({ page: '#images', label: '镜像操作', items: [
-      { id: 'dangling', label: '无Tag', ariaLabel: '清理无Tag镜像', icon: BrushCleaning, disabled: isLoading || !danglingCount },
-      { id: 'unused', label: '未使用', ariaLabel: '清理未使用镜像', icon: Trash2, disabled: isLoading || !unusedCount },
-      { id: 'refresh', label: '刷新', icon: RefreshCw, disabled: isLoading, busy: isLoading },
-    ] })
-  }, [onActionsChange, isLoading, danglingCount, unusedCount])
-  React.useLayoutEffect(() => () => onActionsChange?.(null), [onActionsChange])
-
-  const formatImageSize = (sizeStr) => {
-    if (!sizeStr) return '0 MB'
-    return sizeStr.replace(/mb/gi, 'MB')
-      .replace(/gb/gi, 'GB')
-      .replace(/kb/gi, 'KB')
-  }
-
-  const getSizeColor = (size) => {
-    const sizeInMB = parseInt(size)
-    if (sizeInMB < 100) return 'text-green-600 dark:text-green-400'
-    if (sizeInMB < 300) return 'text-yellow-600 dark:text-yellow-400'
-    return 'text-red-600 dark:text-red-400'
-  }
-
-  if (isLoading && images.length === 0) {
-    return (
-      <div className="max-w-7xl mx-auto px-2 sm:px-6 py-4">
-        <div className="animate-pulse space-y-4">
-          <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded w-32"></div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {[1, 2, 3, 4, 5, 6].map(i => (
-              <div key={i} className="card p-6 h-48 rounded-2xl"></div>
-            ))}
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="max-w-7xl mx-auto">
-      {iconQuery.isError && <div className="px-2 sm:px-6 pt-4"><Notice>图标读取失败：{iconQuery.error.message} <button type="button" className="underline" onClick={() => iconQuery.refetch()}>重试</button></Notice></div>}
-      {/* 页面头部 */}
-      <PageHeader title="镜像管理" className="px-2 sm:px-6">
-        {!mobileActions && <>
-            <button
-              type="button" aria-label="清理无Tag镜像" title="清理无Tag镜像"
-              onClick={() => openPrune('dangling')}
-              disabled={isLoading || !danglingCount}
-              className="btn page-action bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-200 hover:bg-orange-200 dark:hover:bg-orange-800 focus:ring-orange-500 disabled:opacity-50"
-            >
-              <BrushCleaning aria-hidden="true" className="h-4 w-4" />
-              <span className="hidden sm:inline">无Tag</span>
-            </button>
-            <button
-              type="button" aria-label="清理未使用镜像" title="清理未使用镜像"
-              onClick={() => openPrune('unused')}
-              disabled={isLoading || !unusedCount}
-              className="btn page-action bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-200 hover:bg-purple-200 dark:hover:bg-purple-800 focus:ring-purple-500 disabled:opacity-50"
-            >
-              <Trash2 aria-hidden="true" className="h-4 w-4" />
-              <span className="hidden sm:inline">未使用</span>
-            </button>
-            <button
-              type="button" aria-label="刷新" title="刷新"
-              onClick={fetchImages}
-              disabled={isLoading}
-              className="btn-primary page-action disabled:opacity-50"
-            >
-              <RefreshCw aria-hidden="true" className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
-              <span className="hidden sm:inline">刷新</span>
-            </button>
-        </>}
-      </PageHeader>
-
-      {/* 状态消息 */}
-      {error && (
-        <div className="mx-4 sm:mx-6 mt-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-900 rounded-lg flex items-start gap-3">
-          <AlertCircle className="h-5 w-5 text-red-500 dark:text-red-400 flex-shrink-0 mt-0.5" />
-          <span className="text-red-800 dark:text-red-200 text-sm flex-1">{error}</span>
-          <button
-            onClick={() => setError(null)}
-            className="text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 flex-shrink-0"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-      )}
-
-      {success && (
-        <div className="mx-4 sm:mx-6 mt-4 p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-900 rounded-lg flex items-start gap-3">
-          <CheckCircle className="h-5 w-5 text-green-500 dark:text-green-400 flex-shrink-0 mt-0.5" />
-          <span className="text-green-800 dark:text-green-200 text-sm flex-1">{success}</span>
-          <button
-            onClick={() => setSuccess(null)}
-            className="text-green-500 hover:text-green-700 dark:text-green-400 dark:hover:text-green-300 flex-shrink-0"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-      )}
-
-      {/* 成功弹窗 */}
-      {successModal.isOpen && (
-        <div className="modal-viewport bg-black/40 backdrop-blur-sm z-50 animate-fadeIn">
-          <div className="modal-panel bg-white dark:bg-gray-800 rounded-3xl shadow-2xl max-w-md w-full transform transition-all duration-300 scale-100">
-            {/* 顶部装饰条 */}
-            <div className="h-1 bg-gradient-to-r from-green-400 via-emerald-500 to-green-600"></div>
-
-            <div className="p-8 flex flex-col items-center text-center">
-              {/* 成功图标容器 - 带脉冲动画 */}
-              <div className="relative mb-6">
-                <div className="absolute inset-0 bg-green-400/20 rounded-full blur-xl animate-pulse"></div>
-                <div className="relative h-16 w-16 bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-900/30 dark:to-emerald-900/30 rounded-full flex items-center justify-center border border-green-200 dark:border-green-700">
-                  <CheckCircle className="h-8 w-8 text-green-600 dark:text-green-400 animate-bounceIn" />
-                </div>
-              </div>
-
-              {/* 标题 */}
-              <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">
-                操作成功
-              </h3>
-
-              {/* 分隔线 */}
-              <div className="w-12 h-1 bg-gradient-to-r from-transparent via-green-400 to-transparent rounded-full mb-4"></div>
-
-              {/* 消息内容 */}
-              <p className="text-gray-600 dark:text-gray-300 text-sm leading-relaxed mb-8">
-                {successModal.message}
-              </p>
-
-              {/* 按钮 */}
-              <button
-                onClick={() => setSuccessModal({ isOpen: false, message: '' })}
-                className="w-full px-6 py-3 bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white font-semibold rounded-xl transition-all duration-300 transform hover:shadow-lg hover:scale-105 active:scale-95 shadow-lg"
-              >
-                完成
-              </button>
-            </div>
-
-            {/* 底部装饰 */}
-            <div className="h-0.5 bg-gradient-to-r from-transparent via-green-200 dark:via-green-800 to-transparent"></div>
-          </div>
-        </div>
-      )}
-
-      {/* 统计信息 */}
-      <div className="px-2 sm:px-6 pt-0 pb-3 sm:py-3">
-        <div className="grid grid-cols-4 gap-0 rounded-3xl overflow-hidden shadow-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
-          {/* 总镜像数 */}
-          <button
-            onClick={() => setFilterStatus(null)}
-            className={cn(
-              "p-3 sm:p-5 text-center transition-all duration-300 relative overflow-hidden group border-r border-gray-200 dark:border-gray-700 flex flex-col items-center justify-center",
-              filterStatus === null ? "bg-primary-50 dark:bg-primary-900/20" : "hover:bg-gray-50 dark:hover:bg-gray-700/50"
-            )}
-          >
-            <div className="absolute inset-0 bg-gradient-to-br from-primary-500/5 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-            <div className="relative">
-              <div className="text-2xl sm:text-3xl font-bold text-primary-600 dark:text-primary-400 transition-transform duration-300 group-hover:scale-110">
-                {images.length}
-              </div>
-              <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mt-1">总镜像</div>
-            </div>
-          </button>
-
-          {/* 使用中 */}
-          <button
-            onClick={() => setFilterStatus('used')}
-            className={cn(
-              "p-3 sm:p-5 text-center transition-all duration-300 relative overflow-hidden group border-r border-gray-200 dark:border-gray-700 flex flex-col items-center justify-center",
-              filterStatus === 'used' ? "bg-green-50 dark:bg-green-900/20" : "hover:bg-gray-50 dark:hover:bg-gray-700/50"
-            )}
-          >
-            <div className="absolute inset-0 bg-gradient-to-br from-green-500/5 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-            <div className="relative">
-              <div className="text-2xl sm:text-3xl font-bold text-green-600 dark:text-green-400 transition-transform duration-300 group-hover:scale-110">
-                {images.filter(img => img.inUsed).length}
-              </div>
-              <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mt-1">使用中</div>
-            </div>
-          </button>
-
-          {/* 未使用 */}
-          <button
-            onClick={() => setFilterStatus('unused')}
-            className={cn(
-              "p-3 sm:p-5 text-center transition-all duration-300 relative overflow-hidden group border-r border-gray-200 dark:border-gray-700 flex flex-col items-center justify-center",
-              filterStatus === 'unused' ? "bg-yellow-50 dark:bg-yellow-900/20" : "hover:bg-gray-50 dark:hover:bg-gray-700/50"
-            )}
-          >
-            <div className="absolute inset-0 bg-gradient-to-br from-yellow-500/5 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-            <div className="relative">
-              <div className="text-2xl sm:text-3xl font-bold text-yellow-600 dark:text-yellow-400 transition-transform duration-300 group-hover:scale-110">
-                {images.filter(img => !img.inUsed).length}
-              </div>
-              <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mt-1">未使用</div>
-            </div>
-          </button>
-
-          {/* 无Tag */}
-          <button
-            onClick={() => setFilterStatus('dangling')}
-            className={cn(
-              "p-3 sm:p-5 text-center transition-all duration-300 relative overflow-hidden group flex flex-col items-center justify-center",
-              filterStatus === 'dangling' ? "bg-orange-50 dark:bg-orange-900/20" : "hover:bg-gray-50 dark:hover:bg-gray-700/50"
-            )}
-          >
-            <div className="absolute inset-0 bg-gradient-to-br from-orange-500/5 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-            <div className="relative">
-              <div className="text-2xl sm:text-3xl font-bold text-orange-600 dark:text-orange-400 transition-transform duration-300 group-hover:scale-110">
-                {images.filter(img => img.tag === 'None' || img.tag === '<none>').length}
-              </div>
-              <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mt-1">无Tag</div>
-            </div>
-          </button>
-        </div>
-      </div>
-
-      {/* 筛选提示 */}
-      {filterStatus && (
-        <div className="px-4 sm:px-6 pt-2 pb-0">
-          <div className="mb-0 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-blue-700 dark:text-blue-300">
-                筛选中：
-                {filterStatus === 'used' && '使用中的镜像'}
-                {filterStatus === 'unused' && '未使用的镜像'}
-                {filterStatus === 'dangling' && '无Tag的镜像'}
-              </span>
-              <button
-                onClick={() => setFilterStatus(null)}
-                className="px-2 py-0.5 text-xs font-medium text-blue-600 dark:text-blue-300 hover:text-blue-800 dark:hover:text-blue-100 bg-blue-100 dark:bg-blue-800/50 rounded transition-colors"
-              >
-                清除筛选
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 镜像网格 */}
-      <div className="px-2 sm:px-6 pt-0 pb-4 sm:py-3">
-        {images.length === 0 ? (
-          <div className="card p-12 text-center rounded-2xl">
-            <HardDrive className="h-12 w-12 text-gray-300 dark:text-gray-600 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-1">暂无镜像</h3>
-            <p className="text-gray-500 dark:text-gray-400">您还没有任何Docker镜像</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {images
-              .filter((image) => {
-                if (!filterStatus) return true
-                if (filterStatus === 'used') return image.inUsed
-                if (filterStatus === 'unused') return !image.inUsed
-                if (filterStatus === 'dangling') return image.tag === 'None' || image.tag === '<none>'
-                return true
-              })
-              .map((image) => (
-                <div key={image.id} className="group card p-4 rounded-2xl hover:shadow-lg transition-all">
-                  {/* 头部：图标、名字、状态指示器和大小 */}
-                  <div className="flex items-start gap-3 mb-4">
-                    <div className="h-10 w-10 bg-gray-100 dark:bg-gray-700 rounded-lg flex items-center justify-center flex-shrink-0 overflow-hidden">
-                      <SafeImage
-                        src={getImageLogo(`${image.name}:${image.tag}`, customIcons)}
-                        alt={image.name}
-                        className="h-10 w-10 object-cover"
-                        fallback={<HardDrive className="h-5 w-5 text-gray-500 dark:text-gray-400" />}
-                      />
-                    </div>
-                    
-                    {/* 竖线状态指示器 */}
-                    <div className="flex flex-col items-center justify-center h-10">
-                      {image.inUsed && (
-                        <div className="w-1 h-6 bg-gradient-to-b from-green-500 to-green-600 rounded-full flex-shrink-0" />
-                      )}
-                      {!image.inUsed && (
-                        <div className="w-1 h-6 bg-gray-300 dark:bg-gray-600 rounded-full flex-shrink-0" />
-                      )}
-                    </div>
-                    
-                    <div className="flex-1 min-w-0">
-                      <h4 className="font-semibold text-gray-900 dark:text-white truncate text-sm">
-                        {image.name}
-                      </h4>
-                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 flex items-center justify-between gap-2">
-                        <span className="truncate">{image.tag}</span>
-                        <span className={cn("font-semibold flex-shrink-0 whitespace-nowrap", getSizeColor(image.size))}>
-                          大小: {formatImageSize(image.size)}
-                        </span>
-                      </p>
-                    </div>
-
-                    {/* 官网跳转按钮 - 始终显示 */}
-                    <div className="flex gap-1">
-                      <a
-                        href={`https://hub.docker.com/r/${image.name}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="p-1.5 text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 rounded transition-colors active:scale-95"
-                        title="在Docker Hub查看"
-                      >
-                        <Link className="h-4 w-4" />
-                      </a>
-                    </div>
-                  </div>
-
-                  {/* 镜像信息 */}
-                  <div className="space-y-2 text-xs mb-4">
-                    <div className="flex items-center gap-2">
-                      <span className="text-gray-500 dark:text-gray-400 flex-shrink-0">ID:</span>
-                      <span className="font-mono text-gray-700 dark:text-gray-300 truncate text-xs">
-                        {image.id}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* 操作按钮 */}
-                  <div className="flex gap-2 pt-4 border-t border-gray-100 dark:border-gray-700">
-                    <button
-                      onClick={() => setDeleteModal({ isOpen: true, image, force: false })}
-                      className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors active:scale-95"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                      <span>删除</span>
-                    </button>
-                    {image.inUsed && (
-                      <button
-                        onClick={() => setDeleteModal({ isOpen: true, image, force: true })}
-                        className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-xs text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-900/20 rounded-lg transition-colors active:scale-95"
-                        title="强制删除正在使用的镜像"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                        <span>强制删除</span>
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-          </div>
-        )}
-      </div>
-
-      {/* 批量删除确认弹窗 */}
-      {pruneModal.isOpen && (
-        <div className="modal-viewport bg-black/40 backdrop-blur-sm z-50 animate-fadeIn">
-          <div className="modal-panel bg-white dark:bg-gray-800 rounded-3xl shadow-2xl max-w-2xl w-full flex flex-col transform transition-all duration-300 scale-100">
-            {/* 顶部装饰条 */}
-            <div className="h-1 bg-gradient-to-r from-orange-400 via-red-500 to-orange-600"></div>
-
-            <div className="p-6 border-b border-gray-200 dark:border-gray-700">
-              <div className="flex items-start gap-4">
-                <div className="relative h-12 w-12 bg-gradient-to-br from-orange-50 to-red-50 dark:from-orange-900/30 dark:to-red-900/30 rounded-full flex items-center justify-center flex-shrink-0 border border-orange-200 dark:border-orange-700 flex-shrink-0">
-                  <AlertCircle className="h-6 w-6 text-orange-600 dark:text-orange-400" />
-                </div>
-                <div className="flex-1">
-                  <h3 className="text-lg font-bold text-gray-900 dark:text-white">
-                    {pruneModal.type === 'dangling' ? '清理无Tag镜像' : '清理未使用镜像'}
-                  </h3>
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mt-2">
-                    清理当前设备{pruneModal.type === 'dangling' ? '未被容器引用的无Tag镜像' : '所有未被容器引用的镜像'}，不可恢复。
-                    当前列表 <span className="font-semibold text-orange-600 dark:text-orange-400">{pruneModal.images.length} 个</span>，停止的容器所用镜像也会保留。
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* 镜像列表 */}
-            <div className="flex-1 overflow-y-auto px-6 py-4 bg-gray-50/50 dark:bg-gray-700/20">
-              <div className="space-y-2">
-                {pruneModal.images.map((img) => (
-                  <div key={img.id} className="flex items-center gap-3 p-3 bg-white dark:bg-gray-700 rounded-xl hover:shadow-md transition-all duration-200">
-                    <div className="h-8 w-8 bg-gray-200 dark:bg-gray-600 rounded-lg flex items-center justify-center flex-shrink-0 overflow-hidden">
-                      <SafeImage
-                        src={getImageLogo(`${img.name}:${img.tag}`, customIcons)}
-                        alt={img.name}
-                        className="h-8 w-8 object-cover"
-                        fallback={<HardDrive className="h-4 w-4 text-gray-500 dark:text-gray-400" />}
-                      />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
-                        {img.name}
-                      </p>
-                      <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                        {img.tag}
-                      </p>
-                    </div>
-                    <div className="text-xs font-semibold text-gray-600 dark:text-gray-400 flex-shrink-0 bg-gray-100 dark:bg-gray-600 px-2 py-1 rounded-lg">
-                      {formatImageSize(img.size)}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* 底部按钮 */}
-            <div className="p-6 border-t border-gray-200 dark:border-gray-700 bg-gradient-to-r from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-700/50 flex gap-3">
-              <button
-                onClick={() => setPruneModal({ isOpen: false, type: null, images: [] })}
-                className="flex-1 px-4 py-2.5 text-sm font-semibold bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-600 transition-all duration-300 transform hover:shadow-md active:scale-95 border border-gray-200 dark:border-gray-600"
-              >
-                取消
-              </button>
-              <button
-                onClick={() => {
-                  handlePrune(pruneModal.type)
-                  setPruneModal({ isOpen: false, type: null, images: [] })
-                }}
-                disabled={isLoading}
-                className="flex-1 px-4 py-2.5 text-sm font-semibold bg-gradient-to-r from-red-500 to-orange-500 hover:from-red-600 hover:to-orange-600 text-white rounded-xl transition-all duration-300 transform hover:shadow-lg hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg"
-              >
-                {isLoading ? (
-                  <span className="flex items-center justify-center gap-2">
-                    <RefreshCw className="h-4 w-4 animate-spin" />
-                    清理中...
-                  </span>
-                ) : (
-                  '确认清理'
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 删除确认弹窗 */}
-      {deleteModal.isOpen && (
-        <div className="modal-viewport bg-black/40 backdrop-blur-sm z-50 animate-fadeIn">
-          <div className="modal-panel bg-white dark:bg-gray-800 rounded-3xl shadow-2xl max-w-md w-full transform transition-all duration-300 scale-100">
-            {/* 顶部装饰条 */}
-            {/*<div className="h-1 bg-gradient-to-r from-red-400 via-rose-500 to-red-600"></div>*/}
-
-            <div className="p-8 flex flex-col">
-              {/* 图标和标题 */}
-              <div className="flex items-start gap-4 mb-6">
-                <div className="relative h-12 w-12 bg-gradient-to-br from-red-50 to-rose-50 dark:from-red-900/30 dark:to-rose-900/30 rounded-full flex items-center justify-center flex-shrink-0 border border-red-200 dark:border-red-700">
-                  <AlertCircle className="h-6 w-6 text-red-600 dark:text-red-400" />
-                </div>
-                <div className="flex-1">
-                  <h3 className="text-lg font-bold text-gray-900 dark:text-white">
-                    {deleteModal.force ? '强制删除镜像' : '删除镜像'}
-                  </h3>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">此操作不可恢复</p>
-                </div>
-              </div>
-
-              {/* 分隔线 */}
-              <div className="w-full h-px bg-gradient-to-r from-transparent via-red-200 dark:via-red-800 to-transparent mb-6"></div>
-
-              {/* 消息内容 */}
-              <div className="text-gray-600 dark:text-gray-300 text-sm leading-relaxed mb-8">
-                {deleteModal.force ? (
-                  <>
-                    确定要强制删除镜像{' '}
-                    <span className="font-semibold text-red-600 dark:text-red-400">"{deleteModal.image?.name}"</span>
-                    {' '}吗？这将删除正在使用的镜像！
-                  </>
-                ) : (
-                  <>
-                    确定要删除镜像{' '}
-                    <span className="font-semibold text-red-600 dark:text-red-400">"{deleteModal.image?.name}"</span>
-                    {' '}吗？
-                  </>
-                )}
-              </div>
-
-              {/* 按钮组 */}
-              <div className="flex gap-3">
-                <button
-                  onClick={() => setDeleteModal({ isOpen: false, image: null })}
-                  className="flex-1 px-4 py-2.5 text-sm font-semibold bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-xl hover:bg-gray-200 dark:hover:bg-gray-600 transition-all duration-300 transform hover:shadow-md active:scale-95 border border-gray-200 dark:border-gray-600"
-                >
-                  取消
-                </button>
-                <button
-                  onClick={() => deleteModal.image && handleDeleteImage(deleteModal.image.id, deleteModal.force)}
-                  disabled={isLoading}
-                  className="flex-1 px-4 py-2.5 text-sm font-semibold bg-gradient-to-r from-red-500 to-rose-500 hover:from-red-600 hover:to-rose-600 text-white rounded-xl transition-all duration-300 transform hover:shadow-lg hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg"
-                >
-                  {isLoading ? (
-                    <span className="flex items-center justify-center gap-2">
-                      <RefreshCw className="h-4 w-4 animate-spin" />
-                      删除中
-                    </span>
-                  ) : (
-                    '确认删除'
-                  )}
-                </button>
-              </div>
-            </div>
-
-            {/* 底部装饰 */}
-            <div className="h-0.5 bg-gradient-to-r from-transparent via-red-200 dark:via-red-800 to-transparent"></div>
-          </div>
-        </div>
-      )}
-    </div>
-  )
+  const menuFor = image => [
+    { label: '在 Docker Hub 查看', icon: ExternalLink, href: `https://hub.docker.com/r/${image.name}` },
+    { label: '删除镜像', icon: Trash2, danger: true, disabled, onClick: () => remove(image) },
+    image.inUsed && { label: '强制删除', icon: Trash2, danger: true, disabled, onClick: () => remove(image, true) },
+  ]
+  const visible = images.filter(image => filter === 'used' ? image.inUsed : filter === 'unused' ? !image.inUsed : filter === 'dangling' ? isDangling(image) : true)
+  return <div className="workspace-page max-w-7xl mx-auto text-gray-900 dark:text-gray-100">
+    <PageHeader title="镜像" menu={[{ label: '刷新', icon: RefreshCw, disabled: query.isFetching || busy, onClick: () => query.refetch() }]}>
+      <ActionMenu title="清理镜像" label="清理" icon={null} triggerClassName="page-action action-accent" disabled={disabled} items={[
+        { label: '清理无 Tag 镜像', icon: BrushCleaning, count: candidates('dangling').length, disabled: !candidates('dangling').length, onClick: () => setPrune('dangling') },
+        { label: '清理未使用镜像', icon: Trash2, count: candidates('unused').length, disabled: !candidates('unused').length, onClick: () => setPrune('unused') },
+      ]} />
+    </PageHeader>
+    <ConnectionNotice error={query.error} hasData={!!query.data} retry={() => query.refetch()} busy={query.isFetching} />
+    <Notice onClose={() => setFailure('')}>{failure}</Notice>
+    {icons.isError && <Notice>图标读取失败：{icons.error.message}<button type="button" className="underline ml-2 min-h-[44px]" onClick={() => icons.refetch()}>重试</button></Notice>}
+    <Toast onClose={() => setMessage('')}>{message}</Toast>
+    <ResourceFilters value={filter} onChange={setFilter} items={[
+      { id: null, label: '全部', count: images.length },
+      { id: 'used', label: '使用中', count: images.filter(image => image.inUsed).length },
+      { id: 'unused', label: '未使用', count: candidates('unused').length },
+      { id: 'dangling', label: '无 Tag', count: images.filter(isDangling).length },
+    ]} />
+    {busy && <p role="status" className="flex items-center gap-2 text-sm text-primary-600 py-2"><RefreshCw className="h-4 w-4 animate-spin" />正在处理…</p>}
+    {query.isPending ? <div className="resource-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3" aria-label="正在加载镜像">{[1,2,3].map(id => <div key={id} className="card h-28 animate-pulse" />)}</div> : visible.length ? <div className="resource-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+      {visible.map(image => <article key={`${image.id}:${imageName(image)}`} aria-label={`镜像 ${imageName(image)}`} className="resource-card card p-4 flex items-start gap-2 min-w-0">
+        <button type="button" className="min-w-0 flex-1 flex items-center gap-3 text-left rounded-lg min-h-[64px] focus-visible:ring-2 focus-visible:ring-primary-500" onClick={() => setSelected(image)} aria-label={`查看镜像 ${imageName(image)}`}>
+          <span className="h-10 w-10 shrink-0 rounded-xl bg-gray-100 dark:bg-gray-700 flex items-center justify-center overflow-hidden"><DeviceImage src={getImageLogo(imageName(image), icons.icons)} alt="" className="h-10 w-10 object-cover" fallback={<HardDrive className="h-5 w-5 text-gray-400" />} /></span>
+          <span className="min-w-0 flex-1"><span className="block font-semibold text-sm truncate" title={image.name}>{image.name}</span><span className="block text-xs text-gray-500 dark:text-gray-400 truncate mt-0.5">{image.tag}</span><span className="block text-xs text-gray-500 dark:text-gray-400 mt-1">{image.inUsed ? '使用中' : '未使用'} · {image.size}</span></span>
+        </button>
+        <ActionMenu title={`${imageName(image)} 更多操作`} items={menuFor(image)} />
+      </article>)}
+    </div> : <div className="py-12 text-center text-sm text-gray-500">{query.error ? '镜像读取失败' : images.length ? '没有匹配的镜像' : '暂无镜像'}</div>}
+    {selected && <Dialog title="镜像详情" onClose={() => setSelected(null)}><div className="p-5 space-y-4 text-sm">
+      <ConnectionNotice error={query.error} hasData={!!query.data} retry={() => query.refetch()} busy={query.isFetching} />
+      <p className="font-medium break-all">{imageName(selected)}</p><p className="text-gray-500 break-all font-mono text-xs">{selected.id}</p><p>{selected.inUsed ? '使用中' : '未使用'} · {selected.size}</p>
+      <Notice>{failure}</Notice><div className="flex items-center justify-end gap-2"><button type="button" className="btn-danger disabled:opacity-50" disabled={disabled} onClick={() => remove(selected)}>删除</button><ActionMenu title="镜像操作" items={menuFor(selected)} /></div>
+    </div></Dialog>}
+    {prune && <Dialog title={prune === 'dangling' ? '清理无 Tag 镜像' : '清理未使用镜像'} onClose={() => setPrune(null)}>
+      <div className="p-5 space-y-3 text-sm"><p>设备：{workspace?.deviceLabel || deviceId}</p><p>将清理 {candidates(prune).length} 个未被容器引用的镜像。</p><ul className="max-h-48 overflow-y-auto space-y-1 text-xs text-gray-500 break-all">{candidates(prune).map(image => <li key={`${image.id}:${imageName(image)}`}>{imageName(image)}</li>)}</ul><p className="text-xs text-gray-500">实际范围以设备执行时的引用状态为准；后续使用需重新拉取。</p></div>
+      <div className="border-t border-gray-200 dark:border-gray-700 p-4 flex justify-end gap-2"><button type="button" className="btn-secondary" onClick={() => setPrune(null)}>取消</button><button type="button" className="btn-danger disabled:opacity-50" disabled={disabled || !candidates(prune).length} onClick={clean}>确认清理</button></div>
+    </Dialog>}
+  </div>
 }

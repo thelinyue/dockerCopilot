@@ -19,7 +19,6 @@ const isCustom = value => !frequencies.some(([cron]) => cron === value)
 // 调度时间由设备按自身时区返回，保留其墙上时间，不转换为浏览器时区。
 const date = value => value && !value.startsWith('0001') ? value.slice(0, 16).replace('T', ' ') : '未启用'
 const checkbox = 'h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700'
-const actionButton = 'inline-flex items-center justify-center gap-2 min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 px-2 sm:px-3 py-2 text-sm font-medium whitespace-nowrap rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-sm hover:shadow transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed'
 const selectSettings = data => {
   // 旧节点没有统一计划时间，继续展示双计划，避免只改界面却仍执行两次。
   const unified = data.nextRuns.schedule !== undefined
@@ -77,27 +76,26 @@ export function Automation({ layout, onDirty, beforeLeave }) {
   const exclusionOptions = getExclusionOptions(form || {}, containers, projectData?.projects || [])
   const setExclusion = (option, selected) => autosave.change('exclusions', changeExclusion(form, option, selected))
   return (
-    <SettingsPanel {...layout} status={<AutosaveStatus autosave={autosave} />} actions={
-      <button type="button" aria-label="执行记录" title="执行记录" className="btn-secondary page-action" onClick={() => setHistoryOpen(true)}><History aria-hidden="true" className="h-4 w-4" /><span className="hidden sm:inline">执行记录</span></button>
-    }>
+    <SettingsPanel {...layout} status={<AutosaveStatus autosave={autosave} />} menu={[
+      { label: '立即检测', icon: RefreshCw, disabled: busy || !form, onClick: () => run('立即检测', managementAPI.check) },
+      { label: '检测并更新', icon: Play, disabled: busy || !form, onClick: update },
+      task && { label: '查看进度', icon: Clock, onClick: () => setProgressOpen(true) },
+      { label: '执行记录', icon: History, onClick: () => setHistoryOpen(true) },
+    ].filter(Boolean)}>
       <div className="space-y-4">
         <Notice onClose={failure ? () => setFailure('') : undefined}>{failure || (!form && error?.message)}</Notice>
         <AutosaveFeedback autosave={autosave} fields={data?.unified ? ['schedule', 'proxy', 'githubProxy'] : ['checkCron', 'updateCron', 'proxy', 'githubProxy']} />
         <Notice type="warning">{autosave.refreshFailure}</Notice>
         {isLoading && <div className="card p-6 animate-pulse h-48" />}
-        {form && <form id="automation-settings" onSubmit={event => { event.preventDefault(); void autosave.flush() }} className="space-y-4">
-          <section className="card rounded-2xl overflow-hidden">
-            <div className="px-4 sm:px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center gap-1 sm:gap-3">
+        {form && <form id="automation-settings" onSubmit={event => { event.preventDefault(); void autosave.flush() }} className="settings-form space-y-4">
+          <section className="settings-section card rounded-2xl overflow-hidden">
+            <div className="settings-section-header px-4 sm:px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center gap-1 sm:gap-3">
               <h3 className="font-semibold flex items-center gap-2 whitespace-nowrap"><Clock className="h-5 w-5 text-primary-600 dark:text-primary-400" />定时计划</h3>
-              <div role="group" aria-label="立即执行" className="flex items-center gap-1 sm:gap-2">
-                {task && <button type="button" aria-label="查看进度" title="查看进度" className="btn-icon-secondary flex-shrink-0" onClick={() => setProgressOpen(true)}><History className="h-4 w-4" /></button>}
-                <button type="button" aria-label="立即检测" title="立即检测（使用已保存设置）" className={`${actionButton} text-primary-600 dark:text-primary-400 hover:bg-primary-50 dark:hover:bg-primary-900/20 hover:border-primary-200 dark:hover:border-primary-800`} disabled={busy} onClick={() => run('立即检测', managementAPI.check)}><RefreshCw className="h-4 w-4 flex-shrink-0" /><span className="hidden sm:inline">立即检测</span></button>
-                <button type="button" aria-label="检测并更新" title="检测并更新（使用已保存设置）" className={`${actionButton} text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 hover:border-purple-200 dark:hover:border-purple-800`} disabled={busy} onClick={update}><Play className="h-4 w-4 flex-shrink-0" /><span className="hidden sm:inline">检测并更新</span></button>
-              </div>
+
             </div>
             {!data.unified && <p className="px-4 sm:px-6 pt-4 text-xs text-gray-500 dark:text-gray-400">旧版设备使用双计划，升级后可合并。</p>}
             {data.inheritedSchedule && <p className="px-4 sm:px-6 pt-4 text-xs text-gray-500 dark:text-gray-400">已沿用原{data.settings.autoUpdate ? '自动更新' : '检测'}频率</p>}
-            <div className="p-4 sm:px-6 grid md:grid-cols-2 gap-x-6 gap-y-3">
+            <div className="settings-section-body schedule-body p-4 sm:px-6 grid md:grid-cols-2 gap-x-6 gap-y-3">
               {(data.unified ? [['checkCron', '执行频率']] : [['checkCron', '检测计划'], ['updateCron', '自动更新计划']]).map(([key, label]) => <div key={key} className="space-y-2 min-w-0">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <label htmlFor={key} className="text-sm font-medium">{label}</label>
@@ -130,24 +128,24 @@ export function Automation({ layout, onDirty, beforeLeave }) {
               </div>}
             </div>
           </section>
-          <section className="card rounded-2xl">
-            <div className="px-4 sm:px-6 py-4 border-b border-gray-200 dark:border-gray-700"><h3 className="font-semibold flex items-center gap-2"><ShieldOff className="h-5 w-5 text-primary-600 dark:text-primary-400" />自动更新排除项</h3></div>
-            <div className="p-4 sm:p-6">
+          <section className="settings-section card rounded-2xl">
+            <div className="settings-section-header px-4 sm:px-6 py-4 border-b border-gray-200 dark:border-gray-700"><h3 className="font-semibold flex items-center gap-2"><ShieldOff className="h-5 w-5 text-primary-600 dark:text-primary-400" />自动更新排除项</h3></div>
+            <div className="settings-section-body p-4 sm:p-6">
               <ExclusionSelect label="排除容器" options={exclusionOptions} onChange={setExclusion} disabled={busy} loading={containersLoading || projectsLoading} error={containerError || projectError} />
             </div>
           </section>
-          <section className="card rounded-2xl overflow-hidden">
-            <div className="px-4 sm:px-6 py-4 border-b border-gray-200 dark:border-gray-700"><h3 className="font-semibold flex items-center gap-2"><Archive className="h-5 w-5 text-primary-600 dark:text-primary-400" />独立容器更新</h3></div>
-            <div className="px-4 sm:px-6 py-4 space-y-2">
+          <section className="settings-section retention-section card rounded-2xl overflow-hidden">
+            <div className="settings-section-header px-4 sm:px-6 py-4 border-b border-gray-200 dark:border-gray-700"><h3 className="font-semibold flex items-center gap-2"><Archive className="h-5 w-5 text-primary-600 dark:text-primary-400" />独立容器更新</h3></div>
+            <div className="settings-section-body px-4 sm:px-6 py-4 space-y-2">
               <label className="min-h-[44px] flex items-center gap-2 text-sm cursor-pointer">
                 <input type="checkbox" className={checkbox} disabled={busy || typeof form.keepOldContainer !== 'boolean'} checked={form.keepOldContainer ?? false} onChange={event => change('keepOldContainer', event.target.checked)} />保留更新前的旧容器
               </label>
               {typeof form.keepOldContainer !== 'boolean' && <p className="text-xs text-amber-600 dark:text-amber-400">请升级当前设备后配置旧容器保留策略。</p>}
             </div>
           </section>
-          <section className="card rounded-2xl overflow-hidden">
-            <div className="px-4 sm:px-6 py-4 border-b border-gray-200 dark:border-gray-700"><h3 className="font-semibold flex items-center gap-2"><Network className="h-5 w-5 text-primary-600 dark:text-primary-400" />网络设置</h3></div>
-            <div className="px-4 sm:px-6 py-4 grid sm:grid-cols-[auto_minmax(0,1fr)] items-start gap-x-4 gap-y-3">
+          <section className="settings-section card rounded-2xl overflow-hidden">
+            <div className="settings-section-header px-4 sm:px-6 py-4 border-b border-gray-200 dark:border-gray-700"><h3 className="font-semibold flex items-center gap-2"><Network className="h-5 w-5 text-primary-600 dark:text-primary-400" />网络设置</h3></div>
+            <div className="settings-section-body px-4 sm:px-6 py-4 grid sm:grid-cols-[auto_minmax(0,1fr)] items-start gap-x-4 gap-y-3">
               <label htmlFor="registry-proxy" className="block sm:flex sm:items-center sm:min-h-[38px] text-sm font-medium">代理地址</label>
               <div className="min-w-0 space-y-2">
                 <input id="registry-proxy" disabled={busy} autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} type="text" inputMode="url" aria-invalid={invalid('proxy') || undefined} aria-describedby={invalid('proxy') ? 'registry-proxy-error' : undefined} className={`input min-h-[44px] sm:min-h-0 text-sm font-mono ${invalid('proxy') ? 'border-red-400 dark:border-red-500 focus:ring-red-500' : ''}`} placeholder="http://proxy.example:7890" value={form.httpsProxy || form.httpProxy || ''} {...autosave.inputProps('proxy')} onChange={event => {

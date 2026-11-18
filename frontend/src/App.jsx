@@ -1,11 +1,15 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react'
 import { Auth } from './components/Auth.jsx'
-import { Sidebar, MobileBottomNav } from './components/Header.jsx'
+import { Sidebar, MobileBottomNav, ApplicationPreferences } from './components/Header.jsx'
+import { WorkspaceContext } from './hooks/useWorkspace.jsx'
+import { BackNavigationProvider } from './hooks/useBackNavigation.jsx'
+import { DeviceSelector } from './components/Devices.jsx'
 import { Containers } from './components/Containers.jsx'
 import { Images } from './components/Images.jsx'
 import { Settings } from './components/Settings.jsx'
 import { ThemeProvider } from './hooks/useTheme.jsx'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
+import { deviceAPI } from './api/client.js'
 import { cn } from './utils/cn.js'
 
 import { DeviceProvider } from './hooks/useDevice.jsx'
@@ -22,15 +26,22 @@ const queryClient = new QueryClient({
   },
 })
 
-function AppContent() {
+function AppContent({ route, setRoute, navigate }) {
   const confirm = useConfirmation()
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [deviceId, setDeviceId] = useState(() => localStorage.getItem('docker_copilot_device') || 'local')
   const [dirty, setDirty] = useState(false)
   const settingsBeforeLeave = useRef(null)
   const leaving = useRef(false)
-  const [activeTab, setActiveTab] = useState('#compose')
-  const [settingsSection, setSettingsSection] = useState('automation')
+  const activeTab = route.tab
+  const settingsSection = route.section
+  const setActiveTab = tab => setRoute(previous => ({ ...previous, tab }))
+  const setSettingsSection = section => setRoute(previous => ({ ...previous, section }))
+  const [preferencesOpen, setPreferencesOpen] = useState(false)
+  const [online, setOnline] = useState(navigator.onLine)
+  const views = useRef(new Map())
+  const scrollPositions = useRef(new Map())
+  const mainRef = useRef(null)
   const dirtyName = activeTab === '#settings' ? (settingsSection === 'notifications' ? '消息推送设置' : '更新设置') : '项目文件'
   const [containerScope, setContainerScope] = useState(null)
   const [composeTarget, setComposeTarget] = useState(null)
@@ -38,8 +49,15 @@ function AppContent() {
   const [userPreferredCollapsed, setUserPreferredCollapsed] = useState(false)
   const containerBatchRef = useRef(null)
   const [containerBatch, setContainerBatch] = useState(null)
-  const pageActionsRef = useRef(null)
-  const [pageActions, setPageActions] = useState(null)
+  const { data: devices = [] } = useQuery({ queryKey: ['devices'], queryFn: deviceAPI.list, enabled: isAuthenticated })
+  const deviceLabel = deviceId === 'local' ? '本机' : devices.find(device => device.id === deviceId)?.name || deviceId
+
+  useEffect(() => {
+    const update = () => setOnline(navigator.onLine)
+    window.addEventListener('online', update)
+    window.addEventListener('offline', update)
+    return () => { window.removeEventListener('online', update); window.removeEventListener('offline', update) }
+  }, [])
 
   useEffect(() => {
     if (!isAuthenticated) queryClient.removeQueries({ predicate: query => ['iconBlob', 'customIcons'].includes(query.queryKey[1]) })
@@ -166,7 +184,7 @@ function AppContent() {
     }
     if (!await prepareLeave('离开当前页面', '离开')) return false
     setDirty(false)
-    setContainerScope(null)
+    scrollPositions.current.set(`${deviceId}:${activeTab}:${settingsSection}`, mainRef.current?.scrollTop || 0)
     setComposeTarget(null)
     setActiveTab(tab)
     return true
@@ -176,6 +194,7 @@ function AppContent() {
     if (section === settingsSection) return true
     if (!await prepareLeave('切换设置分类', '切换')) return false
     setDirty(false)
+    scrollPositions.current.set(`${deviceId}:${activeTab}:${settingsSection}`, mainRef.current?.scrollTop || 0)
     setSettingsSection(section)
     return true
   }
@@ -194,6 +213,8 @@ function AppContent() {
     setDirty(false)
     setContainerScope(null)
     setComposeTarget(null)
+    scrollPositions.current.set(`${deviceId}:${activeTab}:${settingsSection}`, mainRef.current?.scrollTop || 0)
+    setContainerBatch(null)
     setDeviceId(id)
     localStorage.setItem('docker_copilot_device', id)
     return true
@@ -214,21 +235,28 @@ function AppContent() {
     }
   }
 
+  navigate.current = async next => {
+    if (next.tab !== activeTab && !await handleTabChange(next.tab)) return false
+    if (next.tab === '#settings' && next.section !== settingsSection && !await handleSettingsSectionChange(next.section)) return false
+    return true
+  }
+  useLayoutEffect(() => {
+    if (mainRef.current) mainRef.current.scrollTop = scrollPositions.current.get(`${deviceId}:${activeTab}:${settingsSection}`) || 0
+  }, [deviceId, activeTab, settingsSection])
+
   const renderContent = () => {
     switch (activeTab) {
       case '#containers':
         return <Containers scope={containerScope} onClearScope={() => setContainerScope(null)} onOpenCompose={openCompose}
-          mobileBatch={windowWidth < 768} batchRef={containerBatchRef} onBatchChange={setContainerBatch} />
+          batchRef={containerBatchRef} onBatchChange={setContainerBatch} />
       case '#images':
-        return <Images mobileActions={windowWidth < 768} actionsRef={pageActionsRef} onActionsChange={setPageActions} />
+        return <Images />
       case '#compose':
-        return <Compose onDirty={setDirty} initialTarget={composeTarget} onOpenContainers={openContainers}
-          mobileActions={windowWidth < 768} actionsRef={pageActionsRef} onActionsChange={setPageActions} />
+        return <Compose onDirty={setDirty} initialTarget={composeTarget} onOpenContainers={openContainers} />
       case '#settings':
         return <Settings section={settingsSection} onSectionChange={handleSettingsSectionChange} onDirty={setDirty} beforeLeave={settingsBeforeLeave} />
       default:
-        return <Compose onDirty={setDirty} initialTarget={composeTarget} onOpenContainers={openContainers}
-          mobileActions={windowWidth < 768} actionsRef={pageActionsRef} onActionsChange={setPageActions} />
+        return <Compose onDirty={setDirty} initialTarget={composeTarget} onOpenContainers={openContainers} />
     }
   }
 
@@ -238,6 +266,7 @@ function AppContent() {
 
   return (
     <DeviceProvider deviceId={deviceId}>
+    <WorkspaceContext.Provider value={{ deviceId, deviceLabel, online, mobile: windowWidth < 768, views, openPreferences: () => setPreferencesOpen(true), deviceTrigger: <DeviceSelector deviceId={deviceId} onChange={handleDeviceChange} onManageDevices={handleManageDevices} mobile={windowWidth < 768} header /> }}>
     <div className="app-shell flex bg-gray-50 dark:bg-gray-900 transition-colors duration-300 flex-col lg:flex-row">
       <Sidebar
         activeTab={activeTab}
@@ -251,9 +280,10 @@ function AppContent() {
         onManageDevices={handleManageDevices}
       />
       {/* 仅重建设备内容，导航保留以便关闭面板后恢复入口焦点。 */}
-      <main key={deviceId} className={cn(
+      <main ref={mainRef} key={deviceId} className={cn(
         "flex-1 min-w-0 flex flex-col transition-all duration-300",
-        "overflow-y-auto",
+        "workspace-main overflow-y-auto",
+        windowWidth >= 768 && activeTab === '#containers' && containerBatch?.active && 'pb-16',
         "min-h-0",
         windowWidth < 768
           ? 'mobile-main'
@@ -261,9 +291,9 @@ function AppContent() {
             ? 'ml-20'
             : isSidebarCollapsed
               ? 'ml-20'
-              : 'ml-64'
+              : 'ml-56'
       )}>
-        <div className="flex-1 p-2 sm:p-4 lg:p-4 pt-2 sm:pt-4">
+        <div key={`${deviceId}:${activeTab}`} className="workspace-content flex-1 p-3 sm:p-5 lg:p-4 pt-0 sm:pt-0 lg:pt-0">
           {renderContent()}
         </div>
       </main>
@@ -272,6 +302,7 @@ function AppContent() {
         activeTab={activeTab}
         onTabChange={handleTabChange}
         windowWidth={windowWidth}
+        sidebarWidth={isSidebarCollapsed ? 80 : 224}
         batch={activeTab === '#containers' && containerBatch ? {
           ...containerBatch,
           onEnter: () => containerBatchRef.current?.enter(),
@@ -279,23 +310,26 @@ function AppContent() {
           onSelectAll: () => containerBatchRef.current?.selectAll(),
           onAction: action => containerBatchRef.current?.action(action),
         } : null}
-        actions={pageActions?.page === activeTab ? {
-          ...pageActions,
-          onAction: id => pageActionsRef.current?.[id]?.(),
-        } : null}
+
       />
+      <ApplicationPreferences open={preferencesOpen} onClose={() => setPreferencesOpen(false)} onLogout={handleLogout} />
     </div>
+    </WorkspaceContext.Provider>
     </DeviceProvider>
   )
 }
 
 function App() {
+  const [route, setRoute] = useState({ tab: '#compose', section: 'automation' })
+  const navigate = useRef(null)
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <ConfirmationProvider>
-          <AppContent />
-        </ConfirmationProvider>
+        <BackNavigationProvider route={route} onNavigate={next => navigate.current?.(next)}>
+          <ConfirmationProvider>
+            <AppContent route={route} setRoute={setRoute} navigate={navigate} />
+          </ConfirmationProvider>
+        </BackNavigationProvider>
       </ThemeProvider>
     </QueryClientProvider>
   )

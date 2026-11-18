@@ -2,10 +2,12 @@ import React, { useEffect, useId, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Monitor, Plus, RefreshCw, Trash2, Pencil, Plug, Save, Check, ChevronDown, Network } from 'lucide-react'
 import { deviceAPI } from '../api/client.js'
+import { useWorkspace } from '../hooks/useWorkspace.jsx'
 import { cn } from '../utils/cn.js'
-import { Dialog, Notice, SettingsPanel, useConfirmation } from './ManagementUI.jsx'
+import { Dialog, Notice, SettingsPanel, Toast, useConfirmation } from './ManagementUI.jsx'
 
-export function DeviceSelector({ deviceId, onChange, onManageDevices, compact = false, mobile = false }) {
+export function DeviceSelector({ deviceId, onChange, onManageDevices, compact = false, mobile = false, header = false }) {
+  const workspace = useWorkspace()
   const { data: devices = [], error, isLoading, isFetching, refetch } = useQuery({ queryKey: ['devices'], queryFn: deviceAPI.list })
   const [open, setOpen] = useState(false)
   const trigger = useRef(null)
@@ -37,18 +39,18 @@ export function DeviceSelector({ deviceId, onChange, onManageDevices, compact = 
         title={`当前设备：${deviceName} · ${address}`}
         onClick={() => { setOpen(true); refetch() }}
         className={cn('min-w-0 min-h-[44px] flex items-center text-left transition-colors rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
-          mobile ? 'flex-1 px-2 py-1 hover:bg-gray-50 dark:hover:bg-gray-700/50' : compact ? 'w-full justify-center hover:bg-gray-100 dark:hover:bg-gray-700' : 'w-full h-14 gap-3 px-3 border border-gray-200 dark:border-gray-600 hover:border-primary-300 dark:hover:border-primary-600 hover:bg-primary-50/50 dark:hover:bg-primary-900/10')}
+          header ? 'max-w-[180px] px-1 text-xs text-slate-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-gray-700 motion-reduce:transition-none' : mobile ? 'flex-1 px-2 py-1 hover:bg-gray-50 dark:hover:bg-gray-700/50' : compact ? 'w-full justify-center hover:bg-gray-100 dark:hover:bg-gray-700' : 'w-full h-14 gap-3 px-3 border border-gray-200 dark:border-gray-600 hover:border-primary-300 dark:hover:border-primary-600 hover:bg-primary-50/50 dark:hover:bg-primary-900/10')}
       >
-        {!mobile && <Monitor aria-hidden="true" className={cn('h-5 w-5 flex-shrink-0', error || missing ? 'text-amber-600 dark:text-amber-400' : 'text-primary-600 dark:text-primary-400')} />}
+        {!mobile && !header && <Monitor aria-hidden="true" className={cn('h-5 w-5 flex-shrink-0', error || missing ? 'text-amber-600 dark:text-amber-400' : 'text-primary-600 dark:text-primary-400')} />}
         {!compact && <div className="min-w-0 flex-1">
-          {mobile && <span className="block truncate text-sm sm:text-lg font-bold text-gray-900 dark:text-white">Docker Copilot</span>}
-          <span className={cn('flex items-center gap-1 text-sm font-semibold', mobile ? 'text-primary-700 dark:text-primary-300' : 'text-gray-900 dark:text-white')}>
+          <span className={cn('flex items-center', header ? 'gap-1.5' : cn('gap-1 text-sm font-semibold', mobile ? 'text-primary-700 dark:text-primary-300' : 'text-gray-900 dark:text-white'))}>
+            {header && <span aria-hidden="true" className={cn('h-1.5 w-1.5 shrink-0 rounded-full', deviceId === 'local' && workspace?.online !== false ? 'bg-emerald-600 dark:bg-emerald-400' : 'bg-slate-400')} />}
             <span className="truncate">{deviceName}</span>
-            {mobile && <ChevronDown aria-hidden="true" className="h-4 w-4 flex-shrink-0" />}
+            {(mobile || header) && <ChevronDown aria-hidden="true" className={cn('shrink-0', header ? 'h-3 w-3' : 'h-4 w-4')} />}
           </span>
-          {!mobile && <span className="block truncate text-xs text-gray-500 dark:text-gray-400 mt-0.5">{address}</span>}
+          {!mobile && !header && <span className="block truncate text-xs text-gray-500 dark:text-gray-400 mt-0.5">{address}</span>}
         </div>}
-        {!mobile && !compact && <ChevronDown aria-hidden="true" className="h-4 w-4 flex-shrink-0 text-gray-400" />}
+        {!mobile && !compact && !header && <ChevronDown aria-hidden="true" className="h-4 w-4 flex-shrink-0 text-gray-400" />}
       </button>
       <Dialog id={panelId} title="切换设备" open={open} onClose={() => dismiss()} placement={mobile ? 'sheet' : 'anchored'} anchorRef={trigger} anchorSide={compact ? 'right' : 'bottom'} onExited={() => {
         const action = afterClose.current
@@ -128,17 +130,16 @@ export function Devices({ layout }) {
     })
   }
   return (
-    <SettingsPanel {...layout} actions={<>
-        <button type="button" aria-label="刷新" title="刷新" className="btn-secondary page-action disabled:opacity-50" disabled={isFetching || busy} onClick={() => refetch()}><RefreshCw aria-hidden="true" className={cn('h-4 w-4', isFetching && 'animate-spin')} /><span className="hidden sm:inline">刷新</span></button>
-        <button type="button" aria-label="添加设备" title="添加设备" className="btn-primary page-action" onClick={() => edit()}><Plus aria-hidden="true" className="h-4 w-4" /><span className="hidden sm:inline">添加设备</span></button>
-      </>}>
+    <SettingsPanel {...layout} menu={[{ label: '刷新', icon: RefreshCw, disabled: isFetching || busy, onClick: () => refetch() }]} actions={
+      <button type="button" aria-label="添加设备" className="page-action action-accent" onClick={() => edit()}>添加</button>
+    }>
       <div className="space-y-4">
         <Notice>{failure || error?.message}</Notice>
         <Notice type="warning" onClose={() => setWarning('')}>{warning}</Notice>
-        <Notice type="success" onClose={() => setMessage('')}>{message}</Notice>
+        <Toast onClose={() => setMessage('')}>{message}</Toast>
         {isLoading ? <div className="card p-6 animate-pulse h-32" /> : devices.length ? (
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-            {devices.map(device => <article key={device.id} className="card rounded-2xl overflow-hidden">
+          <div className="device-grid grid grid-cols-1 xl:grid-cols-2 gap-4">
+            {devices.map(device => <article key={device.id} className="device-card card rounded-2xl overflow-hidden">
               <div className="p-4 sm:p-6 flex items-center gap-3">
                 <div className="p-3 rounded-xl bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400"><Monitor className="h-6 w-6" /></div>
                 <div className="min-w-0 flex-1">
@@ -164,7 +165,7 @@ export function Devices({ layout }) {
           <button type="button" className="btn-primary gap-2 mt-4" onClick={() => edit()}><Plus className="h-4 w-4" />添加设备</button>
         </div>}
       </div>
-      {form && <Dialog title={form.id ? '编辑设备' : '添加设备'} onClose={busy ? undefined : () => setForm(null)}>
+      {form && <Dialog mobileFullScreen title={form.id ? '编辑设备' : '添加设备'} onClose={busy ? undefined : () => setForm(null)}>
         <form onSubmit={save}>
           <div className="p-6 space-y-4">
             <Notice>{formError}</Notice>

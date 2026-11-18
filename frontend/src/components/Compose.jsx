@@ -1,10 +1,13 @@
-import React, { useEffect, useId, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Boxes, RefreshCw, Save, FolderOpen, Plus, Play, Square, RotateCcw, Download, Upload, Check, Server, ChevronDown, AlertCircle } from 'lucide-react'
+import { Boxes, RefreshCw, Save, FolderOpen, Plus, Play, Square, RotateCcw, Download, Upload, Check, Server, History, AlertCircle } from 'lucide-react'
 import { useDeviceAPI } from '../hooks/useDevice.jsx'
 import { cn } from '../utils/cn.js'
 import { useResourceTasks, projectResource } from '../hooks/useResourceTasks.js'
-import { Dialog, Notice, PageHeader, UpdateBadge, useConfirmation } from './ManagementUI.jsx'
+import { ActionMenu, ConnectionNotice, Dialog, Notice, PageHeader, ResourceFilters, Toast, useConfirmation } from './ManagementUI.jsx'
+
+import { useViewState, useWorkspace } from '../hooks/useWorkspace.jsx'
+import { TaskHistoryDialog } from './Tasks.jsx'
 
 const actionLabels = { start: '启动', stop: '停止', restart: '重启', pull: '拉取镜像', deploy: '部署', update: '拉取并更新' }
 const actionProgressLabels = { start: '启动中', stop: '停止中', restart: '重启中', pull: '拉取中', deploy: '部署中', update: '更新中' }
@@ -18,13 +21,6 @@ const actionStatusColors = {
   unavailable: 'text-amber-600 dark:text-amber-400',
 }
 const moreActions = [['restart', RotateCcw], ['pull', Download], ['deploy', Upload]]
-const cardActionClass = 'flex-1 flex items-center justify-center gap-1 px-1 py-1.5 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs font-medium whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed'
-const cardActionColors = {
-  start: 'text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 hover:border-green-200 dark:hover:border-green-800',
-  stop: 'text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:border-red-200 dark:hover:border-red-800',
-  restart: 'text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 hover:border-blue-200 dark:hover:border-blue-800',
-  update: 'text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 hover:border-purple-200 dark:hover:border-purple-800',
-}
 
 function getProjectState(project) {
   const running = project.services.reduce((sum, service) => sum + service.running, 0)
@@ -32,45 +28,11 @@ function getProjectState(project) {
   return { running, total, status: project.error ? 'error' : running ? 'running' : 'stopped' }
 }
 
-function ComposeActionMenu({ items, disabled, onAction }) {
-  const id = useId()
-  const root = useRef(null)
-  const trigger = useRef(null)
-  const [open, setOpen] = useState(false)
-  useEffect(() => {
-    if (disabled) setOpen(false)
-  }, [disabled])
-  useEffect(() => {
-    if (!open) return
-    root.current.querySelector('[data-compose-actions] button')?.focus()
-    const outside = event => { if (!root.current.contains(event.target)) setOpen(false) }
-    document.addEventListener('pointerdown', outside)
-    return () => document.removeEventListener('pointerdown', outside)
-  }, [open])
-  return <div ref={root} className="relative flex-1 sm:flex-none" onBlur={event => { if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget)) setOpen(false) }} onKeyDown={event => {
-    // 先关闭展开的操作，避免 Escape 同时关闭整个编辑窗口。
-    if (open && event.key === 'Escape') {
-      event.preventDefault()
-      event.stopPropagation()
-      setOpen(false)
-      trigger.current?.focus()
-    }
-  }}>
-    <button ref={trigger} type="button" className="btn-secondary w-full gap-2 px-3 sm:px-4 disabled:opacity-50" aria-label="更多操作" aria-expanded={open} aria-controls={open ? id : undefined} disabled={disabled} onClick={() => setOpen(value => !value)} onKeyDown={event => { if (event.key === 'ArrowDown') { event.preventDefault(); setOpen(true) } }}>更多<ChevronDown className={cn('h-4 w-4 transition-transform', open && 'rotate-180')} /></button>
-    {open && <div id={id} role="group" aria-label="更多项目操作" data-compose-actions className="absolute bottom-full right-0 mb-2 z-10 w-40 p-1.5 rounded-xl border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 shadow-lg">
-      {items.map(([name, Icon]) => <button key={name} type="button" disabled={disabled} className="flex items-center gap-2 w-full px-3 py-2 text-left text-sm rounded-lg text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 disabled:opacity-50" onClick={() => {
-        setOpen(false)
-        trigger.current?.focus()
-        onAction(name)
-      }}><Icon className="h-4 w-4" />{actionLabels[name]}</button>)}
-    </div>}
-  </div>
-}
-
-export function Compose({ onDirty, initialTarget, onOpenContainers, mobileActions, actionsRef, onActionsChange }) {
+export function Compose({ onDirty, initialTarget, onOpenContainers }) {
   const { deviceId, containerAPI, managementAPI } = useDeviceAPI()
   const queryClient = useQueryClient()
   const confirm = useConfirmation()
+  const workspace = useWorkspace()
   const { data, error, isLoading, isFetching, refetch } = useQuery({ queryKey: [deviceId, 'composeProjects'], queryFn: managementAPI.projects })
   const { data: info } = useQuery({ queryKey: [deviceId, 'nodeInfo'], queryFn: managementAPI.info })
   const { data: containers = [], isFetching: fetchingContainers, refetch: refreshContainers } = useQuery({
@@ -82,7 +44,7 @@ export function Compose({ onDirty, initialTarget, onOpenContainers, mobileAction
   const hasProjectUpdate = item => item.services.some(service => service.containers.some(id => updatableContainerIds.has(id)))
   const projects = data?.projects || []
   const [projectId, setProjectId] = useState('')
-  const [filterStatus, setFilterStatus] = useState('all')
+  const [filterStatus, setFilterStatus] = useViewState('projects:filter', 'all')
   const [index, setIndex] = useState(0)
   const [content, setContent] = useState('')
   const [original, setOriginal] = useState('')
@@ -93,6 +55,7 @@ export function Compose({ onDirty, initialTarget, onOpenContainers, mobileAction
   const [message, setMessage] = useState('')
   const [failure, setFailure] = useState('')
   const [services, setServices] = useState([])
+  const [historyOpen, setHistoryOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   const [importName, setImportName] = useState('')
   const [importFiles, setImportFiles] = useState('')
@@ -100,15 +63,6 @@ export function Compose({ onDirty, initialTarget, onOpenContainers, mobileAction
   const refreshing = isFetching || fetchingContainers
   const openImport = () => { setImportError(''); setImportOpen(true) }
   const refreshProjects = () => { refetch(); refreshContainers() }
-  // 页面保留实际回调，底部只接收显示状态，避免刷新后仍调用旧设备或旧状态。
-  React.useImperativeHandle(actionsRef, () => ({ import: openImport, refresh: refreshProjects }))
-  React.useLayoutEffect(() => {
-    onActionsChange?.({ page: '#compose', label: '项目操作', items: [
-      { id: 'import', label: '接管项目', icon: Plus },
-      { id: 'refresh', label: '刷新', icon: RefreshCw, disabled: busy || refreshing, busy: refreshing },
-    ] })
-  }, [onActionsChange, busy, refreshing])
-  React.useLayoutEffect(() => () => onActionsChange?.(null), [onActionsChange])
   const { getTask, submitOperation, error: taskReadError, refresh: refreshProgress, isFetching: fetchingProgress } = useResourceTasks()
   const requestNumber = useRef(0)
   const openedTarget = useRef(null)
@@ -126,7 +80,8 @@ export function Compose({ onDirty, initialTarget, onOpenContainers, mobileAction
   const targetServices = project?.services.filter(service => !services.length || services.includes(service.name)) || []
   const running = targetServices.some(service => service.running > 0)
   const hasStopped = targetServices.some(service => service.running < service.total)
-  const actionDisabled = mutating || !!project?.error || !info?.capabilities.compose
+  const disconnected = !!error || workspace?.online === false
+  const actionDisabled = disconnected || mutating || !!project?.error || !info?.capabilities.compose
   const projectTask = !!task
   const currentValidation = loaded && validation?.projectId === projectId && validation.index === index && validation.content === content ? validation : null
   const checking = loaded && (!currentValidation || currentValidation.status === 'checking')
@@ -214,11 +169,12 @@ export function Compose({ onDirty, initialTarget, onOpenContainers, mobileAction
     setMessage('')
   }
   const closeProject = async () => {
-    if (!await canLeave()) return
+    if (!await canLeave()) return false
     setProjectId('')
     setServices([])
     setMessage('')
     setFailure('')
+    return true
   }
   const act = async fn => {
     setBusy(true)
@@ -249,7 +205,7 @@ export function Compose({ onDirty, initialTarget, onOpenContainers, mobileAction
     if (target.id === projectId && dirty) { setFailure('请先保存文件'); return }
     if (['deploy', 'update', 'stop', 'restart'].includes(name) && !await confirm({
       title: `${actionLabels[name]}项目`,
-      message: `${actionLabels[name]} ${target.name}${selectedServices.length ? ` 的 ${selectedServices.join('、')}` : ' 的全部服务'}？${['deploy', 'update'].includes(name) ? '将应用已保存的配置；所选范围内已停止的服务可能被启动，卷内数据无法回退。' : ''}`,
+      message: `设备：${workspace?.deviceLabel || deviceId}\n${actionLabels[name]} ${target.name}${selectedServices.length ? ` 的 ${selectedServices.join('、')}` : ' 的全部服务'}？${['deploy', 'update'].includes(name) ? '将应用已保存的配置；所选范围内已停止的服务可能被启动，卷内数据无法回退。' : ''}`,
       confirmText: actionLabels[name],
       danger: name === 'stop',
     })) return
@@ -273,48 +229,32 @@ export function Compose({ onDirty, initialTarget, onOpenContainers, mobileAction
     } catch (e) { setImportError(e.message) } finally { setBusy(false) }
   }
   return (
-    <div className="max-w-7xl mx-auto text-gray-900 dark:text-gray-100">
-      <PageHeader title="项目管理" className="px-2 sm:px-6" meta={info?.composeRoot && <span className="ml-auto flex min-w-0 items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400" title={info.composeRoot} aria-label={`项目根目录：${info.composeRoot}`}>
-        <FolderOpen aria-hidden="true" className="h-3.5 w-3.5 flex-shrink-0" /><span className="truncate font-mono">{info.composeRoot}</span>
-      </span>}>
-        {!mobileActions && <>
-          <button type="button" aria-label="接管项目" title="接管项目" className="btn-secondary page-action" onClick={openImport}><Plus aria-hidden="true" className="h-4 w-4" /><span className="hidden sm:inline">接管项目</span></button>
-          <button type="button" aria-label="刷新" title="刷新" className="btn-primary page-action disabled:opacity-50" disabled={busy || refreshing} onClick={refreshProjects}><RefreshCw aria-hidden="true" className={cn('h-4 w-4', refreshing && 'animate-spin')} /><span className="hidden sm:inline">刷新</span></button>
-        </>}
+    <div className="workspace-page max-w-7xl mx-auto text-gray-900 dark:text-gray-100">
+      <PageHeader title="项目" menu={[
+        { label: '刷新', icon: RefreshCw, disabled: refreshing, onClick: refreshProjects },
+        { label: '执行记录', icon: History, onClick: () => setHistoryOpen(true) },
+      ]} meta={info?.composeRoot && <span className="truncate text-xs text-gray-500" title={info.composeRoot}><FolderOpen className="inline h-3.5 w-3.5 mr-1" />{info.composeRoot}</span>}>
+        <button type="button" aria-label="接管项目" className="page-action action-accent" disabled={disconnected} onClick={openImport}>接管</button>
       </PageHeader>
-      <div className="px-2 sm:px-6 space-y-4">
+      <div className="space-y-4">
         {info && !info.capabilities.compose && <Notice type="warning">当前容器缺少项目管理组件，请升级 DockerCopilot 镜像。</Notice>}
-        <Notice>{error?.message}</Notice>
+        <ConnectionNotice error={error} hasData={!!data} retry={refreshProjects} busy={refreshing} />
         <Notice type="warning">{data?.warning}</Notice>
         {!project && <>
           <Notice onClose={() => setFailure('')}>{failure}</Notice>
-          <Notice type="success" onClose={() => setMessage('')}>{message}</Notice>
+          <Toast onClose={() => setMessage('')}>{message}</Toast>
         </>}
       </div>
 
-      <div className="px-2 sm:px-6 pt-0 pb-3 sm:py-3">
-        <div className="grid grid-cols-5 rounded-3xl overflow-hidden shadow-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
-          {filters.map((filter, filterIndex) => <button key={filter.id} type="button" aria-pressed={filterStatus === filter.id} onClick={() => setFilterStatus(filter.id)} className={cn(
-            'px-0.5 py-3 sm:p-5 text-center transition-all duration-300 group flex flex-col items-center justify-center min-w-0',
-            filterIndex < filters.length - 1 && 'border-r border-gray-200 dark:border-gray-700',
-            filterStatus === filter.id ? filter.active : 'hover:bg-gray-50 dark:hover:bg-gray-700/50'
-          )}>
-            <span className={cn('text-2xl sm:text-3xl font-bold transition-transform duration-300 group-hover:scale-110', filter.color)}>{isLoading || (!data && error) ? '—' : filter.count}</span>
-            <span className="text-[10px] sm:text-sm text-gray-600 dark:text-gray-400 mt-1 whitespace-nowrap">{filter.label}</span>
-          </button>)}
-        </div>
-      </div>
+      <ResourceFilters items={filters} value={filterStatus} onChange={setFilterStatus} />
 
-      <div className="px-2 sm:px-6 pt-0 pb-4 sm:py-3">
-        {filterStatus !== 'all' && <div className="flex justify-end mb-3">
-          <button type="button" className="text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline" onClick={() => setFilterStatus('all')}>清除筛选</button>
-        </div>}
-        {isLoading ? <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4" aria-label="正在加载项目">
+      <div className="resource-list pt-0 pb-4 sm:py-3">
+        {isLoading ? <div className="resource-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4" aria-label="正在加载项目">
           {[1, 2, 3, 4].map(value => <div key={value} className="card rounded-2xl p-4 animate-pulse"><div className="h-16 bg-gray-100 dark:bg-gray-700 rounded-lg" /><div className="h-8 mt-3 bg-gray-100 dark:bg-gray-700 rounded-lg" /></div>)}
-        </div> : visibleProjects.length ? <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+        </div> : visibleProjects.length ? <div className="resource-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {visibleProjects.map(item => {
             const { running, total, status } = getProjectState(item)
-            const cardActions = running ? [['stop', Square], ['restart', RotateCcw], ['update', Upload]] : [['start', Play], ['update', Upload]]
+            const cardActions = running ? [['stop', Square], ['update', Upload]] : [['start', Play], ['update', Upload]]
             const statusLabel = running ? `${running < total ? '部分运行' : '运行中'} ${running}/${total}` : '未运行'
             const cardTask = getTask(projectResource(item))
             const currentTask = !!cardTask
@@ -327,25 +267,39 @@ export function Compose({ onDirty, initialTarget, onOpenContainers, mobileAction
             const taskMessage = progressError ? '进度暂不可用，请刷新进度' : cardTask?.message
             const taskLabel = updating ? `${actionProgressLabels[cardTask.action] || '处理中'}${cardTask.percentage > 0 ? ` ${Math.round(cardTask.percentage)}%` : ''}` : actionResultLabels[cardTask?.status] || '操作结束'
             const haveUpdate = hasProjectUpdate(item)
-            return <article key={item.id} aria-label={`项目 ${item.name}`} className="card group relative overflow-hidden hover:shadow-lg hover:border-primary-300 dark:hover:border-primary-600 rounded-2xl p-4 min-w-0">
-              {haveUpdate && <UpdateBadge />}
+            return <article key={item.id} aria-label={`项目 ${item.name}`} className="resource-card resource-card-with-actions card group relative overflow-hidden hover:border-primary-300 dark:hover:border-primary-600 rounded-2xl p-4 min-w-0">
               <button type="button" aria-label={`编辑项目 ${item.name}`} disabled={busy && projectId === item.id} onClick={() => selectProject(item.id)} className="flex items-center gap-3 w-full min-w-0 text-left rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 disabled:opacity-50">
-                <span className="h-12 w-12 bg-gradient-to-r from-blue-500 to-purple-600 rounded-xl flex items-center justify-center shadow-sm flex-shrink-0"><Boxes className="h-6 w-6 text-white" /></span>
-                <span className={cn('w-1 h-8 rounded-full flex-shrink-0', status === 'error' || (running && running < total) ? 'bg-yellow-500' : running ? 'bg-green-500' : 'bg-red-500')} />
+                <span className="h-10 w-10 bg-primary-50 dark:bg-primary-900/30 rounded-xl flex items-center justify-center flex-shrink-0"><Boxes className="h-5 w-5 text-primary-600 dark:text-primary-400" /></span>
                 <span className="flex-1 min-w-0">
-                  <span className="block font-semibold text-base text-gray-900 dark:text-white truncate group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors" title={item.name}>{item.name}</span>
+                  <span className="flex items-center gap-2"><span className="truncate font-semibold text-base" title={item.name}>{item.name}</span>{haveUpdate && <span className="shrink-0 text-[10px] text-amber-600">有更新</span>}</span>
                   <span className="block text-xs text-gray-500 dark:text-gray-400 truncate mt-0.5" title={item.directory}>{item.directory}</span>
                   <span role={showTaskStatus ? 'status' : undefined} className={cn('flex items-center gap-1 text-xs mt-1 h-5', showTaskStatus ? actionStatusColors[taskStatus] : item.error ? 'text-amber-600 dark:text-amber-400' : 'text-gray-500 dark:text-gray-400')} title={showTaskStatus ? taskMessage : item.error}>
+                    {!showTaskStatus && <span className={cn('h-1.5 w-1.5 rounded-full shrink-0', status === 'error' || (running && running < total) ? 'bg-amber-500' : running ? 'bg-green-500' : 'bg-gray-400')} />}
                     {updating && !progressError && <RefreshCw className="h-3 w-3 animate-spin flex-shrink-0" />}
                     <span className="truncate">{showTaskStatus ? updating ? taskMessage : taskLabel : item.error ? '配置异常' : `${statusLabel} · ${item.files.length} 个文件`}</span>
                   </span>
                 </span>
               </button>
-              <div className="card-actions flex gap-1 mt-3 pt-3 border-t border-gray-100 dark:border-gray-700/50">
-                {updating ? progressError ? <button type="button" className={cn(cardActionClass, 'text-primary-600 dark:text-primary-400')} disabled={fetchingProgress} onClick={() => refreshProgress()}><RefreshCw className={cn('h-4 w-4', fetchingProgress && 'animate-spin')} />刷新进度</button> : <div className="flex-1 flex items-center justify-center gap-2 px-1 py-1.5 bg-primary-50 dark:bg-primary-900/20 rounded-lg border border-primary-200 dark:border-primary-800 whitespace-nowrap text-xs font-medium text-primary-600 dark:text-primary-400">
+              <div className="card-actions">
+                {updating ? progressError ? <button type="button" className="resource-action action-accent" disabled={fetchingProgress} onClick={() => refreshProgress()}><RefreshCw aria-hidden="true" className={cn('h-4 w-4', fetchingProgress && 'animate-spin')} />刷新进度</button> : <div className="flex-1 flex items-center justify-center gap-2 px-1 py-1.5 bg-primary-50 dark:bg-primary-900/20 rounded-lg border border-primary-200 dark:border-primary-800 whitespace-nowrap text-xs font-medium text-primary-600 dark:text-primary-400">
                   <RefreshCw className="h-4 w-4 animate-spin flex-shrink-0" /><span>{taskLabel}</span>
-                </div> : cardActions.map(([name, Icon]) => <button key={name} type="button" title={`${name === 'update' ? '更新' : actionLabels[name]} ${item.name}`} disabled={updating || (busy && projectId === item.id) || !!item.error || !info?.capabilities.compose} className={cn(cardActionClass, cardActionColors[name])} onClick={() => requestAction(name, item, [])}><Icon className="h-4 w-4" /><span>{name === 'update' ? '更新' : actionLabels[name]}</span></button>)}
-                <button type="button" aria-label={`查看 ${item.name} 的容器`} title="查看容器" className={cn(cardActionClass, 'text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700')} onClick={() => viewContainers(item)}><Server className="h-4 w-4" /><span>容器</span></button>
+                </div> : cardActions.map(([name, Icon]) => (
+                  <button
+                    key={name}
+                    type="button"
+                    title={`${name === 'update' ? '更新' : actionLabels[name]} ${item.name}`}
+                    disabled={(busy && projectId === item.id) || !!item.error || !info?.capabilities.compose || disconnected}
+                    className={cn('resource-action', name === 'update' && 'action-accent')}
+                    onClick={() => requestAction(name, item, [])}
+                  >
+                    <Icon aria-hidden="true" className="h-4 w-4" />
+                    {name === 'update' ? '更新' : actionLabels[name]}
+                  </button>
+                ))}
+                <ActionMenu title={`${item.name} 更多操作`} triggerClassName="resource-action action-icon" disabled={updating} items={[
+                  { label: '查看容器', icon: Server, onClick: () => viewContainers(item) },
+                  ...moreActions.map(([name, Icon]) => ({ label: actionLabels[name], icon: Icon, disabled: disconnected || !!item.error || !info?.capabilities.compose, onClick: () => requestAction(name, item, []) })),
+                ]} />
               </div>
               {currentTask && progress?.isDone && progress.status !== 'succeeded' && <p role="alert" className={cn('mt-3 text-xs whitespace-pre-wrap break-words', actionStatusColors[taskStatus])}>{progress.message}</p>}
             </article>
@@ -356,8 +310,10 @@ export function Compose({ onDirty, initialTarget, onOpenContainers, mobileAction
           {!projects.length && !error && <button type="button" className="btn-primary gap-2 mt-4" onClick={() => { setImportError(''); setImportOpen(true) }}><Plus className="h-4 w-4" />接管项目</button>}
         </div>}
       </div>
-      {project && <Dialog title={project.name} className="max-w-5xl" onClose={busy ? undefined : closeProject}>
+      {historyOpen && <TaskHistoryDialog onClose={() => setHistoryOpen(false)} />}
+      {project && <Dialog mobileFullScreen title={project.name} className="max-w-5xl" onClose={busy ? undefined : closeProject}>
         <div className="p-4 sm:p-6 space-y-3">
+          <ConnectionNotice error={error} hasData={!!data} retry={refreshProjects} busy={refreshing} />
           <Notice onClose={failure ? () => setFailure('') : undefined}>{failure || project.error}</Notice>
           <Notice type="success" onClose={() => setMessage('')}>{message}</Notice>
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -393,8 +349,8 @@ export function Compose({ onDirty, initialTarget, onOpenContainers, mobileAction
             </div>
           </Notice></div>}
           <div className="flex flex-wrap gap-2">
-            <button type="button" className="btn-secondary gap-2 disabled:opacity-50" disabled={mutating || !loaded || !dirty || (invalid && !currentValidation.syntaxValid)} onClick={() => save(false)}><Save className="h-4 w-4" />保存</button>
-            <button type="button" className="btn-primary disabled:opacity-50" disabled={mutating || !loaded || !!project.error || !info?.capabilities.compose || invalid} onClick={async () => {
+            <button type="button" className="btn-secondary gap-2 disabled:opacity-50" disabled={disconnected || mutating || !loaded || !dirty || (invalid && !currentValidation.syntaxValid)} onClick={() => save(false)}><Save className="h-4 w-4" />保存</button>
+            <button type="button" className="btn-primary disabled:opacity-50" disabled={disconnected || mutating || !loaded || !!project.error || !info?.capabilities.compose || invalid} onClick={async () => {
               if (await confirm({ title: '保存并部署', message: `部署 ${project.name}${services.length ? ` 的 ${services.join('、')}` : ' 的全部服务'}？将保存并应用当前配置；卷内数据无法回退。`, confirmText: '保存并部署' })) save(true)
             }}>保存并部署</button>
           </div>
@@ -406,7 +362,7 @@ export function Compose({ onDirty, initialTarget, onOpenContainers, mobileAction
             {progressError ? <button type="button" className="flex-shrink-0 hover:underline disabled:opacity-50" disabled={fetchingProgress} onClick={() => refreshProgress()}>刷新进度</button> : taskRunning && <span className="flex-shrink-0">{taskLabel}</span>}
           </div>}
           <div className="flex flex-wrap items-center gap-3"><h4 className="text-sm font-semibold">服务</h4><span className="text-xs text-gray-500 dark:text-gray-400">{services.length ? `已选 ${services.length} 项` : '全部服务'}</span><button type="button" className="inline-flex items-center gap-1.5 ml-auto text-xs text-primary-600 dark:text-primary-400 hover:underline" onClick={() => viewContainers(project)}><Server className="h-4 w-4" />查看容器</button></div>
-          <div role="group" aria-label="服务选择" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div role="group" aria-label="服务选择" className="resource-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {project.services.map(service => {
               const selected = services.includes(service.name)
               const partial = service.running > 0 && service.running < service.total
@@ -436,11 +392,11 @@ export function Compose({ onDirty, initialTarget, onOpenContainers, mobileAction
           <div className="flex items-center gap-2">
             <button type="button" className={cn('btn-secondary flex-1 sm:flex-none gap-2 px-3 sm:px-4 disabled:opacity-50', running ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400')} disabled={actionDisabled} onClick={() => requestAction(running ? 'stop' : 'start')}>{running ? <Square className="h-4 w-4" /> : <Play className="h-4 w-4" />}{running ? '停止' : '启动'}</button>
             <button type="button" className={cn('btn-secondary flex-1 sm:flex-none gap-2 px-3 sm:px-4 disabled:opacity-50', projectTask && taskRunning && task.action === 'update' ? 'text-primary-600 dark:text-primary-400' : 'text-purple-600 dark:text-purple-400')} title="拉取并更新" disabled={actionDisabled} onClick={() => requestAction('update')}><RefreshCw className={cn('h-4 w-4', projectTask && taskRunning && task.action === 'update' && 'animate-spin')} />{projectTask && taskRunning && task.action === 'update' ? '更新中' : '更新'}</button>
-            <ComposeActionMenu key={project.id} items={running && hasStopped ? [['start', Play], ...moreActions] : moreActions} disabled={actionDisabled} onAction={requestAction} />
+            <ActionMenu title="更多项目操作" label="更多" disabled={actionDisabled || disconnected} items={(running && hasStopped ? [['start', Play], ...moreActions] : moreActions).map(([name, Icon]) => ({ label: actionLabels[name], icon: Icon, onClick: () => requestAction(name) }))} />
           </div>
         </div>
       </Dialog>}
-      {importOpen && <Dialog title="接管已有项目" onClose={busy ? undefined : () => setImportOpen(false)}>
+      {importOpen && <Dialog mobileFullScreen title="接管已有项目" onClose={busy ? undefined : () => setImportOpen(false)}>
         <form onSubmit={importProject}>
           <div className="p-6 space-y-4">
             <Notice>{importError}</Notice>

@@ -1,41 +1,131 @@
 import React, { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { AlertCircle, CheckCircle, Clock, LoaderCircle, RotateCw, X } from 'lucide-react'
+import { AlertCircle, CheckCircle, Clock, LoaderCircle, MoreHorizontal, Palette, RotateCw, X } from 'lucide-react'
 import { cn } from '../utils/cn.js'
 import { settingsErrorTarget } from '../utils/settings.js'
+import { useWorkspace } from '../hooks/useWorkspace.jsx'
+import { useBackLayer } from '../hooks/useBackNavigation.jsx'
 
-export function PageHeader({ title, meta, children, className }) {
+export function PageHeader({ title, meta, children, className, menu = [], selection, status }) {
+  const workspace = useWorkspace()
   return (
-    <header className={cn('flex items-center justify-between gap-2 sm:gap-3 pt-1 pb-2 sm:py-3', className)}>
-      <div className="flex min-w-0 flex-1 items-center gap-3">
-        <h2 className="flex-shrink-0 text-2xl font-bold whitespace-nowrap text-gray-900 dark:text-white">{title}</h2>
-        {meta}
-      </div>
-      {children && <div role="group" aria-label={`${title}操作`} className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">{children}</div>}
-    </header>
+    <><header className={cn('workspace-header', className)}>
+      {selection?.active ? <>
+        <button type="button" className="page-action" onClick={selection.onExit}>取消</button>
+        <h2 className="flex-1 text-center text-base font-semibold" aria-live="polite">已选 {selection.selectedCount} 项</h2>
+        <button type="button" className="page-action action-accent" disabled={!selection.totalCount} onClick={selection.onSelectAll}>{selection.selectedCount === selection.totalCount && selection.totalCount ? '取消全选' : '全选'}</button>
+      </> : <>
+        <div className="flex min-w-0 flex-1 items-center gap-2.5">
+          <h2 className="shrink-0 text-xl font-semibold leading-6">{title.replace('管理', '')}</h2>
+          <div className="flex min-w-0 items-center gap-1">
+            {workspace?.deviceTrigger}
+            {workspace?.online === false && <span role="status" className="shrink-0 text-xs text-amber-700 dark:text-amber-400">离线</span>}
+          </div>
+          {meta && <div className="hidden lg:flex min-w-0 flex-1">{meta}</div>}
+        </div>
+        {status}
+        <div role="group" aria-label={`${title}操作`} className="flex items-center gap-1 shrink-0">
+          {children}
+          {menu.length > 0 && <ActionMenu title={`${title.replace('管理', '')}操作`} items={menu} triggerClassName="page-action action-icon" />}
+        </div>
+      </>}
+    </header><div className="workspace-header-space" /></>
   )
 }
 
-// 四个设置面板共用页头和分类导航，操作仍由各面板持有，避免重复标题和额外留白。
-export function SettingsPanel({ navigation, scope, section, status, actions, children }) {
+export function ActionMenu({ title = '更多操作', items, disabled, label, icon: Icon = MoreHorizontal, triggerRef, triggerClassName }) {
+  const workspace = useWorkspace()
+  const localTrigger = useRef(null)
+  const trigger = triggerRef || localTrigger
+  const [open, setOpen] = useState(false)
+  const afterClose = useRef(null)
+  const id = useId()
   return <>
-    <header className="flex items-center justify-between gap-2 sm:gap-3 min-h-[44px] mb-3">
-      <div className="flex flex-1 items-center gap-2 sm:gap-3 min-w-0">
-        <h2 className="text-2xl font-bold flex-shrink-0">设置</h2>
-        {scope && <span className="min-w-0 truncate text-xs sm:text-sm text-gray-500 dark:text-gray-400" title={scope}>{scope}</span>}
+    <button
+      ref={trigger}
+      type="button"
+      className={triggerClassName || cn(label ? 'btn-secondary gap-1.5' : 'btn-icon-secondary', 'disabled:opacity-40')}
+      aria-label={label || title}
+      title={title}
+      aria-haspopup="dialog"
+      aria-expanded={open}
+      aria-controls={open ? id : undefined}
+      disabled={disabled}
+      onClick={event => { event.stopPropagation(); setOpen(true) }}
+    >
+      {Icon && <Icon aria-hidden="true" className="h-5 w-5" />}
+      {label}
+    </button>
+    <Dialog id={id} title={title} open={open} placement={workspace?.mobile ? 'sheet' : 'anchored'} anchorRef={trigger} anchorAlign="end" actionMenu onClose={() => setOpen(false)} onExited={() => { const action = afterClose.current; afterClose.current = null; action?.() }}>
+      <div className="action-menu-items" onKeyDown={event => {
+        if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+        const entries = Array.from(event.currentTarget.querySelectorAll('button:not(:disabled), a[href]:not([aria-disabled="true"])'))
+        if (!entries.length) return
+        event.preventDefault()
+        const current = entries.indexOf(document.activeElement)
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? entries.length - 1 : (current + (event.key === 'ArrowDown' ? 1 : -1) + entries.length) % entries.length
+        entries[next].focus()
+      }}>
+        {items.filter(Boolean).map((item, index) => {
+          const Tag = item.href ? 'a' : 'button'
+          return <React.Fragment key={item.id || index}>
+            {item.separator && index > 0 && <div role="separator" className="action-menu-separator" />}
+            <Tag type={item.href ? undefined : 'button'} href={item.href} target={item.href ? '_blank' : undefined} rel={item.href ? 'noopener noreferrer' : undefined} aria-disabled={item.disabled || undefined} tabIndex={item.disabled ? -1 : undefined} className={cn('action-menu-item', item.danger && 'text-red-600 dark:text-red-400')} disabled={item.disabled} onClick={event => {
+              event.stopPropagation()
+              if (item.disabled) { event.preventDefault(); return }
+              afterClose.current = item.onClick
+              setOpen(false)
+            }}>
+              {item.icon && <item.icon aria-hidden="true" className="h-4 w-4 shrink-0" />}<span className="flex-1">{item.label}</span>{item.count !== undefined && <span className="text-xs text-gray-500 tabular-nums">{item.count}</span>}
+            </Tag>
+          </React.Fragment>})}
       </div>
-      <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
-        {status && <div className="whitespace-nowrap">{status}</div>}
-        {actions && <div role="group" aria-label="设置操作" className="flex items-center gap-1.5 sm:gap-2">{actions}</div>}
-      </div>
-    </header>
+    </Dialog>
+  </>
+}
+
+export function ResourceFilters({ items, value, onChange }) {
+  return <div role="group" aria-label="资源筛选" className="resource-filters">
+    {items.map(item => <button key={item.id ?? 'all'} type="button" aria-pressed={value === item.id} className={cn('resource-filter', value === item.id && 'resource-filter-active')} onClick={() => onChange(item.id)}><span>{item.label.replace(/^总项目$|^总容器$/, '全部')}</span><span className="tabular-nums opacity-65">{item.count}</span></button>)}
+  </div>
+}
+
+export function ConnectionNotice({ error, hasData, retry, busy }) {
+  const workspace = useWorkspace()
+  if (!error && workspace?.online !== false) return null
+  return <Notice type="warning"><div className="flex items-start gap-2"><span className="flex-1">{hasData ? '连接中断，显示上次数据。' : '无法连接设备。'}{error?.message || '请检查网络连接。'}</span><button type="button" className="underline shrink-0 min-h-[44px]" disabled={busy || workspace?.online === false} onClick={retry}>重试</button></div></Notice>
+}
+
+export function Toast({ children, onClose }) {
+  const close = useRef(onClose)
+  close.current = onClose
+  useEffect(() => {
+    if (children) { const timer = setTimeout(() => close.current?.(), 3200); return () => clearTimeout(timer) }
+  }, [children])
+  if (!children) return null
+  return createPortal(<div className="workspace-toast" role="status"><CheckCircle aria-hidden="true" className="h-4 w-4 shrink-0 text-green-500" /><span>{children}</span><button type="button" aria-label="关闭提示" onClick={onClose} className="btn-icon-secondary"><X className="h-4 w-4" /></button></div>, document.body)
+}
+
+// 四个设置面板共用页头和分类导航，操作仍由各面板持有，避免重复标题和额外留白。
+export function SettingsPanel({ navigation, section, status, actions, menu = [], children }) {
+  const workspace = useWorkspace()
+  return <>
+    <PageHeader title="设置" status={status} menu={[...menu, { label: '外观与关于', icon: Palette, separator: true, onClick: workspace?.openPreferences }]}>{actions}</PageHeader>
     {navigation}
     <div id="settings-panel" role="tabpanel" aria-labelledby={`settings-tab-${section}`}>{children}</div>
   </>
 }
 
 export function AutosaveStatus({ autosave }) {
+  const [recent, setRecent] = useState(false)
+  useEffect(() => {
+    if (!autosave.didSave || autosave.saving || autosave.dirty) return
+    setRecent(true)
+    const timer = setTimeout(() => setRecent(false), 2200)
+    return () => clearTimeout(timer)
+  }, [autosave.didSave, autosave.saving, autosave.dirty])
   const failed = autosave.errors.length > 0
+  if (!autosave.saving && !failed && !autosave.dirty && !recent) return null
   const Icon = autosave.saving ? LoaderCircle : failed ? AlertCircle : autosave.dirty ? Clock : autosave.didSave ? CheckCircle : null
   return <span role="status" aria-live="polite" className={cn(
     'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium',
@@ -44,7 +134,7 @@ export function AutosaveStatus({ autosave }) {
         : 'border-gray-200 bg-white text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400'
   )}>
     {Icon && <Icon aria-hidden="true" className={cn('h-3.5 w-3.5 flex-shrink-0', autosave.saving && 'animate-spin motion-reduce:animate-none', !autosave.saving && !failed && !autosave.dirty && 'text-green-600 dark:text-green-400')} />}
-    {autosave.saving ? '保存中…' : failed ? '保存失败' : autosave.dirty ? '等待自动保存…' : autosave.didSave ? '已保存' : '修改后自动保存'}
+    {autosave.saving ? '保存中' : failed ? '保存失败' : autosave.dirty ? '待保存' : '已保存'}
   </span>
 }
 
@@ -66,19 +156,6 @@ export function AutosaveFeedback({ autosave, target, fields = [], id }) {
   </div>
 }
 
-export function UpdateBadge() {
-  return <div role="img" aria-label="有可用更新" className="absolute -top-[2px] -right-[2px] w-[80px] h-[80px] pointer-events-none overflow-hidden z-20 rounded-tr-2xl">
-    <div className="absolute top-0 right-0 w-full h-full flex items-center justify-center">
-      <div className="absolute transform rotate-45 translate-x-[26px] -translate-y-[26px] w-[120px] h-[24px] bg-gradient-to-r from-yellow-400 to-yellow-500 dark:from-yellow-500 dark:to-yellow-600 shadow-sm flex items-center justify-center">
-        <span className="relative text-[10px] font-bold text-white tracking-widest uppercase w-full text-center">
-          NEW
-          <span className="absolute top-0 left-0 animate-flow-light" />
-        </span>
-      </div>
-    </div>
-  </div>
-}
-
 export function Notice({ children, type = 'error', onClose }) {
   if (!children) return null
   const Icon = type === 'success' ? CheckCircle : AlertCircle
@@ -97,7 +174,7 @@ export function Notice({ children, type = 'error', onClose }) {
 }
 
 // 新增管理操作沿用原有页内弹窗；键盘焦点留在弹窗中，关闭后回到触发位置。
-export function Dialog({ title, onClose, children, className, id, open = true, onExited, placement = 'center', anchorRef, anchorSide = 'bottom' }) {
+export function Dialog({ title, onClose, children, className, id, open = true, onExited, placement = 'center', anchorRef, anchorSide = 'bottom', anchorAlign = 'start', actionMenu = false, mobileFullScreen = false }) {
   const titleId = useId()
   const viewport = useRef(null)
   const panel = useRef(null)
@@ -106,8 +183,10 @@ export function Dialog({ title, onClose, children, className, id, open = true, o
   const [present, setPresent] = useState(open)
   const [anchorStyle, setAnchorStyle] = useState({})
   const navigation = placement !== 'center'
+  const compactMenu = actionMenu && placement === 'anchored'
   close.current = onClose
   exited.current = onExited
+  useBackLayer(open, onClose)
 
   // 导航面板先完成退场并交还焦点，再进入切设备、离开确认等后续流程。
   useLayoutEffect(() => {
@@ -119,9 +198,9 @@ export function Dialog({ title, onClose, children, className, id, open = true, o
     const timer = setTimeout(() => {
       setPresent(false)
       exited.current?.()
-    }, navigation && !window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 200 : 0)
+    }, navigation && !window.matchMedia('(prefers-reduced-motion: reduce)').matches ? compactMenu ? 120 : 200 : 0)
     return () => clearTimeout(timer)
-  }, [open, present, navigation])
+  }, [open, present, navigation, compactMenu])
 
   useLayoutEffect(() => {
     if (!present || placement !== 'anchored') return
@@ -134,9 +213,9 @@ export function Dialog({ title, onClose, children, className, id, open = true, o
       const topEdge = bounds.top + parseFloat(padding.paddingTop)
       const rightEdge = bounds.right - parseFloat(padding.paddingRight)
       const bottomEdge = bounds.bottom - parseFloat(padding.paddingBottom)
-      const width = Math.min(304, rightEdge - leftEdge)
+      const width = Math.min(compactMenu ? 224 : 304, rightEdge - leftEdge)
       const height = Math.min(panel.current.getBoundingClientRect().height, bottomEdge - topEdge)
-      let left = anchorSide === 'right' ? anchor.right + 8 : anchor.left
+      let left = anchorSide === 'right' ? anchor.right + 8 : anchorAlign === 'end' ? anchor.right - width : anchor.left
       let top = anchorSide === 'right' ? anchor.top : anchor.bottom + 8
       if (anchorSide === 'right' && left + width > rightEdge) left = anchor.left - width - 8
       if (anchorSide === 'bottom' && top + height > bottomEdge) top = anchor.top - height - 8
@@ -161,7 +240,7 @@ export function Dialog({ title, onClose, children, className, id, open = true, o
       window.visualViewport?.removeEventListener('resize', update)
       window.visualViewport?.removeEventListener('scroll', update)
     }
-  }, [present, placement, anchorRef, anchorSide])
+  }, [present, placement, anchorRef, anchorSide, anchorAlign, compactMenu])
 
   // 在绘制前记录入口并接管焦点，避免快速按 Tab 时把背景按钮误记为返回位置。
   useLayoutEffect(() => {
@@ -169,7 +248,7 @@ export function Dialog({ title, onClose, children, className, id, open = true, o
     const previous = document.activeElement
     const overflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
-    const focusable = () => Array.from(panel.current.querySelectorAll('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [tabindex="0"]')).filter(item => item.getClientRects().length)
+    const focusable = () => Array.from(panel.current.querySelectorAll('button:not(:disabled), a[href]:not([aria-disabled="true"]), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [tabindex="0"]')).filter(item => item.getClientRects().length)
     const initial = panel.current.querySelector('[data-autofocus]') || focusable()[0]
     initial?.focus()
     const handleKey = event => {
@@ -199,18 +278,18 @@ export function Dialog({ title, onClose, children, className, id, open = true, o
   }, [present])
   if (!present) return null
   const content = (
-    <div ref={viewport} data-closing={!open || undefined} className={cn('modal-viewport z-[60]', navigation ? 'navigation-dialog' : 'bg-black bg-opacity-50', placement === 'sheet' && 'dialog-sheet', placement === 'anchored' && 'dialog-anchored')} onClick={event => { if (open && event.target === event.currentTarget) onClose?.() }}>
-      <section id={id} ref={panel} inert={!open ? '' : undefined} role="dialog" aria-modal="true" aria-labelledby={titleId} style={placement === 'anchored' ? anchorStyle : undefined} className={cn('modal-panel bg-white dark:bg-gray-800 rounded-2xl shadow-xl max-w-lg w-full text-gray-900 dark:text-gray-100', className)}>
-        <div className={cn('border-b border-gray-200 dark:border-gray-700 flex justify-between items-center gap-3 flex-shrink-0', navigation ? 'px-4 py-2' : 'px-6 py-4')}>
-          <h3 id={titleId} className="min-w-0 break-words text-lg font-medium text-gray-900 dark:text-white">{title}</h3>
-          <button type="button" onClick={onClose} disabled={!onClose} aria-label="关闭对话框" className={cn('flex-shrink-0 text-gray-400 hover:text-gray-500 dark:hover:text-gray-300 disabled:opacity-50', navigation && 'btn-icon-secondary flex items-center justify-center min-h-[44px] min-w-[44px]')}><X className="h-5 w-5" /></button>
+    <div ref={viewport} data-closing={!open || undefined} className={cn('modal-viewport z-[60]', navigation ? 'navigation-dialog' : 'bg-black bg-opacity-50', placement === 'sheet' && 'dialog-sheet', placement === 'anchored' && 'dialog-anchored', compactMenu && 'action-menu-dialog')} onClick={event => { if (open && event.target === event.currentTarget) onClose?.() }}>
+      <section id={id} ref={panel} inert={!open ? '' : undefined} role="dialog" aria-modal="true" aria-labelledby={titleId} style={placement === 'anchored' ? anchorStyle : undefined} className={cn('modal-panel bg-white dark:bg-gray-800 rounded-2xl shadow-xl max-w-lg w-full text-gray-900 dark:text-gray-100', mobileFullScreen && 'mobile-fullscreen-panel', className)}>
+        <div className={cn(compactMenu ? 'sr-only' : 'dialog-heading border-b border-gray-200 dark:border-gray-700 flex justify-between items-center gap-3 flex-shrink-0', !compactMenu && (navigation ? 'px-4 py-2' : 'px-6 py-4'))}>
+          <h3 id={titleId} title={title} className={cn('min-w-0 font-medium text-gray-900 dark:text-white', navigation ? 'truncate text-base' : 'break-words text-lg')}>{title}</h3>
+          {!compactMenu && <button type="button" onClick={onClose} disabled={!onClose} aria-label="关闭对话框" className="btn-icon-secondary flex items-center justify-center min-h-[44px] min-w-[44px] shrink-0 disabled:opacity-50"><X className="h-5 w-5" /></button>}
         </div>
         {children}
       </section>
     </div>
   )
   // 侧栏的 transform 会改变 fixed 的定位容器；导航弹层挂到 body，避免裁切与偏移。
-  return navigation ? createPortal(content, document.body) : content
+  return createPortal(content, document.body)
 }
 
 const ConfirmationContext = createContext(null)

@@ -5,11 +5,13 @@ import { iconAssetOptions } from '../hooks/iconAssets.js'
 import { iconFilename } from '../utils/icons.js'
 
 // 自定义图标通过带认证的节点请求加载，不把登录令牌或设备凭据放进图片 URL。
-export function DeviceImage({ src, eager = false, ...props }) {
+export function DeviceImage({ src, eager = false, fallback, onError, ...props }) {
   const { deviceId, managementAPI } = useDeviceAPI()
   const placeholder = useRef(null)
   const [visible, setVisible] = useState(eager)
   const [asset, setAsset] = useState(null)
+  const [failed, setFailed] = useState(false)
+  useEffect(() => setFailed(false), [src])
   const custom = iconFilename(src) !== null
   const query = useQuery({ ...iconAssetOptions(deviceId, managementAPI, src), enabled: custom && visible })
   useEffect(() => {
@@ -28,6 +30,7 @@ export function DeviceImage({ src, eager = false, ...props }) {
     setAsset({ blob: query.data, url })
     return () => URL.revokeObjectURL(url)
   }, [custom, query.data])
-  if (custom && (!asset || asset.blob !== query.data)) return <span ref={placeholder} role="img" aria-label={props.alt} title={query.error?.message} className={`${props.className || ''} inline-flex items-center justify-center bg-gray-100 dark:bg-gray-700 text-gray-400`}>{query.isError ? '?' : ''}</span>
-  return <img loading="lazy" {...props} src={custom ? asset.url : src} />
+  if (fallback && (!src || failed)) return fallback
+  if (custom && (!asset || asset.blob !== query.data)) return <span ref={placeholder} role="img" aria-label={props.alt} title={query.error?.message} className={`${props.className || ''} inline-flex items-center justify-center bg-gray-100 dark:bg-gray-700 text-gray-400`}>{query.isError ? fallback || '?' : ''}</span>
+  return <img loading="lazy" {...props} src={custom ? asset.url : src} onError={event => { setFailed(true); onError?.(event) }} />
 }

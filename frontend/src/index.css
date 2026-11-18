@@ -5,8 +5,6 @@
 @layer base {
   html {
     font-family: 'Inter', system-ui, sans-serif;
-    /* 弹窗锁定背景滚动时保留滚动条占位，避免内容区突然变宽。 */
-    scrollbar-gutter: stable;
     --safe-area-top: env(safe-area-inset-top, 0px);
     --safe-area-bottom: env(safe-area-inset-bottom, 0px);
     --safe-area-left: env(safe-area-inset-left, 0px);
@@ -31,8 +29,80 @@
 @layer components {
 
   .app-shell {
-    min-height: 100vh;
-    min-height: 100dvh;
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  .workspace-main {
+    height: 100%;
+    overscroll-behavior-y: contain;
+    scrollbar-gutter: stable;
+  }
+
+  .workspace-header {
+    @apply sticky top-0 z-30 bg-gray-50 dark:bg-gray-900 flex items-center justify-between gap-1 sm:gap-3 text-gray-900 dark:text-gray-100;
+    height: 72px;
+  }
+
+  .workspace-header-space {
+    display: none;
+  }
+
+  .notification-field {
+    display: grid;
+    gap: 0.5rem;
+  }
+
+  .workspace-bottom {
+    @apply fixed bottom-0 inset-x-0 grid grid-cols-4 z-40 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800;
+    height: calc(var(--mobile-bottom-nav-height) + var(--safe-area-bottom));
+    padding: 0 max(8px, var(--safe-area-right)) var(--safe-area-bottom) max(8px, var(--safe-area-left));
+  }
+
+  .workspace-nav-item {
+    @apply min-w-0 flex flex-col items-center justify-center gap-1 text-[11px] font-medium text-gray-500 dark:text-gray-400 disabled:opacity-35;
+    min-height: 44px;
+    touch-action: manipulation;
+  }
+
+  .workspace-nav-active {
+    @apply text-primary-600 dark:text-primary-400;
+  }
+
+  .workspace-nav-active svg {
+    @apply bg-primary-50 dark:bg-primary-900/30 rounded-lg;
+    box-shadow: 0 0 0 6px theme('colors.primary.50');
+  }
+
+  .dark .workspace-nav-active svg { box-shadow: 0 0 0 6px rgb(30 58 138 / 0.3); }
+
+  .desktop-batch-bar {
+    height: 64px;
+    padding-bottom: 0;
+  }
+
+  .resource-filters {
+    @apply flex items-center gap-1 sm:gap-2 overflow-x-auto mb-3 py-1;
+    scrollbar-width: none;
+  }
+
+  .resource-filter {
+    @apply flex shrink-0 items-center justify-center gap-1.5 px-2.5 sm:px-3 text-xs sm:text-sm text-gray-500 dark:text-gray-400 rounded-lg transition-colors;
+    min-height: 44px;
+  }
+
+  .resource-filter-active {
+    @apply bg-primary-50 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300 font-medium;
+  }
+
+  .workspace-toast {
+    @apply fixed z-[90] flex items-center gap-2 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 text-sm py-1 pl-4 pr-1;
+    bottom: calc(var(--mobile-bottom-nav-height) + var(--safe-area-bottom) + 16px);
+    left: 50%;
+    transform: translateX(-50%);
+    width: max-content;
+    max-width: calc(100vw - 32px);
   }
 
   .mobile-header {
@@ -43,11 +113,7 @@
   }
 
   .mobile-main {
-    padding-bottom: calc(var(--mobile-bottom-nav-height) + 1.25rem + var(--safe-area-bottom));
-  }
-
-  .mobile-bottom-nav {
-    height: var(--mobile-bottom-nav-height);
+    padding-bottom: calc(var(--mobile-bottom-nav-height) + var(--safe-area-bottom));
   }
 
   /* 弹窗跟随实际可视区域，避免 PWA 刘海、底部手势区和软键盘遮挡操作。 */
@@ -66,12 +132,13 @@
   /* 导航弹层共享原有 Dialog 的焦点和滚动管理，仅改变定位与进退场。 */
   .navigation-dialog {
     @apply bg-black/40;
-    animation: navigation-backdrop-in 200ms ease-out both;
+    --navigation-duration: 200ms;
+    animation: navigation-backdrop-in var(--navigation-duration) ease-out both;
   }
 
   .navigation-dialog .modal-panel {
     @apply flex flex-col overflow-hidden;
-    animation: navigation-panel-in 200ms ease-out both;
+    animation: navigation-panel-in var(--navigation-duration) ease-out both;
   }
 
   .dialog-sheet {
@@ -99,11 +166,54 @@
   }
 
   .navigation-dialog[data-closing] {
-    animation: navigation-backdrop-out 200ms ease-in both;
+    animation: navigation-backdrop-out var(--navigation-duration) ease-in both;
   }
 
   .navigation-dialog[data-closing] .modal-panel {
-    animation: navigation-panel-out 200ms ease-in both;
+    animation: navigation-panel-out var(--navigation-duration) ease-in both;
+  }
+
+  /* 桌面菜单贴近操作入口，不用整页遮罩打断列表的空间关系。 */
+  .action-menu-dialog {
+    background: transparent;
+    --navigation-duration: 120ms;
+  }
+
+  .action-menu-dialog .modal-panel {
+    @apply rounded-xl border border-gray-200 dark:border-gray-700;
+    box-shadow: 0 8px 24px rgb(0 0 0 / 0.1), 0 2px 6px rgb(0 0 0 / 0.04);
+  }
+
+  .action-menu-items { @apply overflow-y-auto p-1.5; }
+  .action-menu-item {
+    @apply w-full flex items-center gap-2.5 rounded-md px-2.5 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-700 focus-visible:outline-none focus-visible:bg-primary-50 dark:focus-visible:bg-primary-900/30 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500;
+    min-height: 38px;
+  }
+  .action-menu-item[aria-disabled='true'] { @apply opacity-40 cursor-not-allowed; }
+  .action-menu-separator { @apply my-1 mx-2 border-t border-gray-100 dark:border-gray-700; }
+  .dialog-sheet .action-menu-item { min-height: 44px; }
+
+  .sidebar-item {
+    @apply w-full min-h-[44px] flex items-center gap-3 px-4 rounded-xl text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500;
+  }
+
+  .modal-panel.preferences-panel { max-width: 420px; }
+  .dialog-sheet .preferences-panel { max-width: none; }
+  .preferences-panel > .dialog-heading { @apply px-5 py-2; }
+  .preferences-panel > .dialog-heading h3 { @apply text-base; }
+  .preferences-content { @apply overflow-y-auto p-5 space-y-4; }
+  .preferences-section { @apply border-t border-gray-100 dark:border-gray-700/70 pt-3; }
+  .preferences-link {
+    @apply flex w-full items-center gap-3 rounded-lg px-2.5 text-left text-sm hover:bg-gray-50 dark:hover:bg-gray-700/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500;
+    min-height: 40px;
+  }
+  .preferences-logout { @apply text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20; }
+  .preferences-retry { @apply shrink-0 rounded px-1 font-medium hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-50; min-height: 28px; }
+  .preferences-icon { @apply inline-flex items-center justify-center disabled:opacity-50; min-height: 36px; min-width: 36px; }
+
+  @media (max-width: 767px), (pointer: coarse) {
+    .action-menu-item, .preferences-link, .preferences-retry, .preferences-icon, .theme-options button { min-height: 44px; }
+    .preferences-icon { min-width: 44px; }
   }
 
   .auth-screen {
@@ -120,6 +230,7 @@
 
   .btn {
     @apply inline-flex items-center justify-center px-4 py-2 text-sm font-medium rounded-lg transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2;
+    min-height: 44px;
   }
 
   .btn-primary {
@@ -134,17 +245,36 @@
     @apply btn bg-red-600 text-white hover:bg-red-700 focus:ring-red-500 dark:bg-red-500 dark:hover:bg-red-600;
   }
 
-  /* 页头操作与标题同行，窄屏使用 44px 图标按钮，宽屏恢复图标与文字。 */
-  .page-action {
-    @apply h-11 w-11 shrink-0 gap-2 p-0 sm:h-auto sm:w-auto sm:px-4 sm:py-2;
+  /* 文字操作平时融入页头和卡片，触屏仍保留完整点击范围。 */
+  .page-action, .resource-action {
+    @apply inline-flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 font-medium text-slate-600 dark:text-slate-300 transition-colors motion-reduce:transition-none;
+    @apply hover:enabled:bg-gray-100 active:enabled:bg-gray-200 aria-expanded:bg-gray-100 dark:hover:enabled:bg-gray-700 dark:active:enabled:bg-gray-600 dark:aria-expanded:bg-gray-700;
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .page-action { @apply text-sm; }
+  .resource-action { @apply text-xs; }
+  .action-accent {
+    @apply text-primary-700 dark:text-primary-300 hover:enabled:bg-primary-50 active:enabled:bg-primary-100 aria-expanded:bg-primary-50 dark:hover:enabled:bg-primary-900/30 dark:active:enabled:bg-primary-900/50 dark:aria-expanded:bg-primary-900/30;
+  }
+  .action-icon { @apply px-0; }
+  .action-icon svg { @apply h-[18px] w-[18px]; }
+
+  .card-actions {
+    @apply mt-2 flex items-center justify-end gap-1 border-t border-gray-100 pt-1 dark:border-gray-700;
+  }
+
+  @media (min-width: 768px) and (pointer: fine) {
+    .page-action, .resource-action { min-height: 34px; min-width: 34px; }
   }
 
   .card {
-    @apply bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 transition-all duration-200 hover:shadow-md;
+    @apply bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 transition-colors duration-150;
   }
 
   .input {
     @apply w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200;
+    min-height: 44px;
   }
 
   .badge {
@@ -183,6 +313,89 @@
   .btn-icon-primary {
     @apply p-2 rounded-lg text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:text-blue-400 dark:hover:text-blue-300 dark:hover:bg-blue-900/20 transition-colors;
   }
+
+  /* 桌面根据内容区宽度排版；侧栏展开、收起后无需另设一套断点。 */
+  @media (min-width: 1024px) {
+    .workspace-content {
+      container: workspace / inline-size;
+    }
+
+    .workspace-content .workspace-page {
+      max-width: none;
+      margin-inline: 0;
+    }
+
+    .workspace-header { height: 60px; }
+    .resource-filters { margin-bottom: 8px; padding-block: 0; }
+    .workspace-page .resource-list { padding-top: 0; }
+
+    .workspace-page .resource-grid {
+      grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr));
+      gap: 12px;
+    }
+
+    .workspace-page .resource-card { padding: 12px; }
+    .resource-card-with-actions { display: flex; flex-direction: column; }
+    .workspace-page .resource-card-with-actions > .card-actions { margin-top: auto; }
+
+    .workspace-page .device-grid {
+      grid-template-columns: repeat(auto-fill, minmax(min(100%, 20rem), 1fr));
+      gap: 12px;
+    }
+
+    .device-card > div:first-child { padding: 16px; }
+    .device-card > div:last-child { padding: 8px 16px; }
+
+    .workspace-page .icon-grid {
+      grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+      gap: 12px;
+    }
+
+    .workspace-page .icon-card { padding: 12px; }
+    .settings-navigation { width: fit-content; }
+    .settings-form .settings-section { min-width: 0; }
+    .settings-form .settings-section-header { padding: 10px 16px; }
+    .settings-form .settings-section-body { padding: 12px 16px; }
+    .settings-form .schedule-body { column-gap: 16px; row-gap: 8px; }
+  }
+
+  @container workspace (min-width: 960px) {
+    .settings-form {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      align-items: start;
+      gap: 12px;
+    }
+
+    .workspace-page .settings-form > :not([hidden]) ~ :not([hidden]) { margin-block: 0; }
+    .settings-form .schedule-body { grid-template-columns: minmax(0, 1fr); }
+    .schedule-body > .md\:col-span-2 { grid-column: 1 / -1; }
+
+    .retention-section { display: flex; align-items: center; }
+    .retention-section .settings-section-header { border-bottom: 0; flex-shrink: 0; }
+    .retention-section .settings-section-body { flex: 1; min-width: 0; }
+    .retention-section .settings-section-body label { justify-content: flex-end; }
+
+    .settings-form .notification-fields { grid-template-columns: minmax(0, 1fr); }
+    .notification-field { grid-template-columns: 6rem minmax(0, 1fr); align-items: center; }
+    .notification-field > [role='alert'] { grid-column: 2; }
+  }
+
+  @container workspace (min-width: 1440px) {
+    .settings-form .schedule-body { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+
+  /* 鼠标操作使用紧凑控件；触屏继续保留原有触摸高度。 */
+  @media (min-width: 1024px) and (pointer: fine) {
+    .workspace-page .btn, .workspace-page .input { min-height: 36px; padding-block: 6px; }
+    .workspace-page .resource-filter, .workspace-page .settings-navigation [role='tab'] { min-height: 36px; }
+    .settings-form label.min-h-\[44px\] { min-height: 32px; }
+    .settings-form .settings-section-header > label { min-height: 24px; }
+  }
+
+  @media (pointer: coarse) {
+    .workspace-page .input { min-height: 44px; }
+  }
 }
 
 @layer utilities {
@@ -216,15 +429,34 @@
     }
   }
 
-  .card-actions > button {
-    min-width: 0;
-    gap: 0.125rem;
-    padding-left: 0.125rem;
-    padding-right: 0.125rem;
-  }
-
   @media (max-width: 767px) {
-    .btn, .btn-icon-secondary, .btn-icon-primary, .btn-icon-error, .btn-icon-success, .card-actions > button {
+    .workspace-main { scrollbar-width: none; scrollbar-gutter: auto; }
+    .mobile-main .input { min-height: 44px; }
+    .workspace-header {
+      @apply fixed inset-x-0 top-0 z-40 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700;
+      height: var(--mobile-header-height);
+      padding: var(--safe-area-top) max(12px, var(--safe-area-right)) 0 max(12px, var(--safe-area-left));
+    }
+
+    .workspace-header-space { display: block; height: var(--mobile-header-height); }
+
+    .modal-viewport:has(.mobile-fullscreen-panel) {
+      padding: var(--safe-area-top) var(--safe-area-right) var(--safe-area-bottom) var(--safe-area-left);
+      @apply bg-white dark:bg-gray-800;
+    }
+
+    .mobile-fullscreen-panel {
+      height: 100%;
+      width: 100%;
+      max-width: none;
+      border-radius: 0;
+      box-shadow: none;
+    }
+
+    .mobile-fullscreen-panel > div:first-child { position: sticky; top: 0; z-index: 1; @apply bg-white dark:bg-gray-800 px-4 py-2; }
+    .mobile-fullscreen-panel button { min-height: 44px; }
+
+    .btn, .btn-icon-secondary, .btn-icon-primary, .btn-icon-error, .btn-icon-success {
       min-height: 2.75rem;
     }
 

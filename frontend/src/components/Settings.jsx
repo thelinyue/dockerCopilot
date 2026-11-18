@@ -21,7 +21,7 @@ export function Settings({ section, onSectionChange, onDirty, beforeLeave }) {
     // 切换内容会卸载原面板；新面板渲染后把焦点交还分类按钮。
     requestAnimationFrame(() => document.getElementById(`settings-tab-${accepted ? id : section}`)?.focus({ preventScroll: true }))
   }
-  const navigation = <div role="tablist" aria-label="设置分类" className="grid grid-cols-4 sm:flex gap-1 p-1 mb-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+  const navigation = <div role="tablist" aria-label="设置分类" className="settings-navigation grid grid-cols-4 sm:flex gap-1 p-1 mb-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
     {sections.map(({ id, label, shortLabel, icon: Icon }, index) => <button
       key={id}
       id={`settings-tab-${id}`}
@@ -51,7 +51,7 @@ export function Settings({ section, onSectionChange, onDirty, beforeLeave }) {
   </div>
   const layout = { navigation, scope, section }
 
-  return <div className="max-w-7xl mx-auto px-2 sm:px-6 py-2 sm:py-4 text-gray-900 dark:text-gray-100">
+  return <div className="workspace-page max-w-7xl mx-auto text-gray-900 dark:text-gray-100">
     {section === 'automation' && <Automation layout={layout} onDirty={onDirty} beforeLeave={beforeLeave} />}
     {section === 'notifications' && <Notifications layout={layout} onDirty={onDirty} beforeLeave={beforeLeave} />}
     {section === 'devices' && <Devices layout={layout} />}

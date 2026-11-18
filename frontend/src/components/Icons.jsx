@@ -8,7 +8,9 @@ import { useDeviceAPI } from '../hooks/useDevice.jsx'
 import { useIcons } from '../hooks/useIcons.js'
 import { iconAssetOptions } from '../hooks/iconAssets.js'
 import { ICON_ACCEPT, iconFilename, iconId, migrateFavorites, normalizeImageRepository } from '../utils/icons.js'
-import { Dialog, Notice, SettingsPanel, useConfirmation } from './ManagementUI.jsx'
+import { Dialog, Notice, SettingsPanel, Toast, useConfirmation } from './ManagementUI.jsx'
+
+import { useViewState } from '../hooks/useWorkspace.jsx'
 
 const EMPTY_ICONS = {}
 const categories = { all: '全部图标', custom: '自定义图标', builtin: '内置图标', favorites: '收藏' }
@@ -24,8 +26,8 @@ export function Icons({ layout }) {
   const confirm = useConfirmation()
   const query = useIcons()
   const customIcons = query.data || EMPTY_ICONS
-  const [searchTerm, setSearchTerm] = useState('')
-  const [category, setCategory] = useState('all')
+  const [searchTerm, setSearchTerm] = useViewState('icons:search', '')
+  const [category, setCategory] = useViewState('icons:category', 'all')
   const [favorites, setFavorites] = useState(() => {
     const saved = readFavorites(deviceId)
     return Array.isArray(saved) ? saved : []
@@ -154,14 +156,13 @@ export function Icons({ layout }) {
   const resultLoading = query.isPending && (category === 'custom' || category === 'favorites')
   const queryNotice = query.isError && <Notice>自定义图标读取失败：{query.error.message} <button type="button" disabled={query.isFetching} onClick={() => query.refetch()} className="underline disabled:opacity-50">重试</button></Notice>
   const showGlobalError = !selected && uploadTarget === null
-  return <SettingsPanel {...layout} actions={<>
-    <button type="button" aria-label="刷新" title="刷新" className="btn-secondary page-action disabled:opacity-50" disabled={query.isFetching || pending} onClick={() => query.refetch()}><RefreshCw aria-hidden="true" className={cn('h-4 w-4', query.isFetching && 'animate-spin')} /><span className="hidden sm:inline">刷新</span></button>
-    <button ref={uploadButton} type="button" aria-label="上传图标" title="上传图标" className="btn-primary page-action" onClick={() => startUpload(null)}><Upload aria-hidden="true" className="h-4 w-4" /><span className="hidden sm:inline">上传图标</span></button>
-  </>}>
+  return <SettingsPanel {...layout} menu={[{ label: '刷新', icon: RefreshCw, disabled: query.isFetching || pending, onClick: () => query.refetch() }]} actions={
+    <button ref={uploadButton} type="button" aria-label="上传图标" className="page-action action-accent" onClick={() => startUpload(null)}>上传</button>
+  }>
     <div className="space-y-3">
       {queryNotice}
       {showGlobalError && <Notice onClose={() => setError('')}>{error}</Notice>}
-      <Notice type={message.includes('回收失败') ? 'warning' : 'success'} onClose={() => setMessage('')}>{message}</Notice>
+      {message.includes('回收失败') ? <Notice type="warning" onClose={() => setMessage('')}>{message}</Notice> : <Toast onClose={() => setMessage('')}>{message}</Toast>}
       <div className="card p-4 flex flex-col sm:flex-row sm:items-center gap-3">
         <div className="relative flex-1 min-w-0">
           <Search aria-hidden="true" className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
@@ -183,11 +184,11 @@ export function Icons({ layout }) {
         if (!group.length) return null
         return <section key={source} aria-label={categories[source]}>
           <h3 className="font-semibold mb-3">{categories[source]}</h3>
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4">
+          <div className="icon-grid grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4">
             {group.map(entry => {
               const id = iconId(entry)
               const favorite = favorites.includes(id)
-              return <article key={id} className="card p-3 sm:p-4 rounded-2xl flex flex-col min-w-0">
+              return <article key={id} className="icon-card card p-3 sm:p-4 rounded-2xl flex flex-col min-w-0">
                 <button type="button" aria-label={`查看${categories[source]} ${entry.name}`} className="flex-1 min-w-0 w-full rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500" onClick={event => { selectedTrigger.current = event.currentTarget; setError(''); setSelected(entry) }}>
                   <DeviceImage src={entry.url} alt={entry.name} className="w-12 h-12 mx-auto object-contain rounded-lg" />
                   <span className="block text-xs font-medium truncate mt-3 text-gray-700 dark:text-gray-300" title={entry.name}>{entry.name}</span>
@@ -237,7 +238,7 @@ export function Icons({ layout }) {
       </div>
     </Dialog>}
 
-    {uploadTarget !== null && <Dialog title={uploadTarget ? '替换图标' : '上传图标'} onClose={pending ? undefined : () => { setUploadTarget(null); setError('') }}>
+    {uploadTarget !== null && <Dialog mobileFullScreen title={uploadTarget ? '替换图标' : '上传图标'} onClose={pending ? undefined : () => { setUploadTarget(null); setError('') }}>
       <form onSubmit={submitUpload}>
         <div className="p-6 space-y-4">
           <Notice>{error}</Notice>
